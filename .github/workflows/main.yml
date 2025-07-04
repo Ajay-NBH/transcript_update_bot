@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-          GOOGLE_TOKEN: ${{ secrets.GOOGLE_TOKEN }}
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
+      GOOGLE_TOKEN: ${{ secrets.GOOGLE_TOKEN }}
+      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
 
     steps:
       - name: Checkout repository
