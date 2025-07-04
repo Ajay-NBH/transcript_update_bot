@@ -7,4 +7,6 @@ openpyxl
 PyMuPDF
 markdown
 google-generativeai
-dotenv
+python-dotenv
+requests
+email

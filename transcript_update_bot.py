@@ -9,7 +9,6 @@ from email.mime.text import MIMEText
 import io # For GDrive downloads
 import re 
 import json
-import fitz
 import requests
 
 from google.auth.transport.requests import Request
@@ -19,7 +18,6 @@ from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
-from zoneinfo import ZoneInfo
 
 import google.generativeai as genai
 
