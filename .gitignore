@@ -9,3 +9,4 @@ __pycache__
 
 *.json
 .DS_Store
+*.json.b64

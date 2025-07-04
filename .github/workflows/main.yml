@@ -9,6 +9,12 @@ jobs:
   run-script:
     runs-on: ubuntu-latest
 
+    # Only the raw API key stays un‐encoded
+    env:
+      FIREFLY_API_KEY:   ${{ secrets.FIREFLY_API_KEY }}
+      GOOGLE_CREDS_B64:  ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
+      GOOGLE_TOKEN_B64:  ${{ secrets.GOOGLE_TOKEN_B64 }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -16,30 +22,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: '3.8'  # Specify the Python version
+          python-version: '3.8'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
-      - name: Load environment variables
-        env:
-          GOOGLE_TOKEN: ${{ secrets.GOOGLE_TOKEN }}
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
-        run: |
-          echo "${{secrets.GOOGLE_CREDENTIALS}}" > credentials.json
 
-      - name: Dump Google Credentials to Disk
-        env:
-          GOOGLE_CREDENTIALS: ${{secrets.GOOGLE_CREDENTIALS}}
+      - name: Decode Google secrets
         run: |
-          cat << 'EOF' > credentials.json
-          $GOOGLE_CREDENTIALS
-          EOF
+          # Decode and write your client_secrets (for InstalledAppFlow)
+          echo "$GOOGLE_CREDS_B64" | base64 --decode > credentials.json
+          # Decode and write your stored token (so from_authorized_user_file() can read it)
+          echo "$GOOGLE_TOKEN_B64" | base64 --decode > token.json
 
-      - name: Run script
+      - name: Run transcript update bot
         env:
+          # Point your Python code at the files we just wrote
           GOOGLE_CREDENTIALS: credentials.json
+          GOOGLE_TOKEN:      token.json
+          FIREFLY_API_KEY:   ${{ secrets.FIREFLY_API_KEY }}
         run: python transcript_update_bot.py
