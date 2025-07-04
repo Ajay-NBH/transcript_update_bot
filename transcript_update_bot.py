@@ -29,8 +29,8 @@ SCOPES = [
     'https://www.googleapis.com/auth/documents'
 ]
 
-token = "token_brandvmeet.json"
-CREDENTIALS_FILE = "brand_vmeet_creds.json"
+token = os.getenv(GOOGLE_TOKEN, "brand_vmeet_token.json")
+CREDENTIALS_FILE = os.getenv(GOOGLE_CREDENTIALS, "brand_vmeet_credentials.json")
 creds = None
 if os.path.exists(token):
     creds = Credentials.from_authorized_user_file(token, SCOPES)
