@@ -28,8 +28,14 @@ jobs:
           GOOGLE_TOKEN: ${{ secrets.GOOGLE_TOKEN }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
+
+      - name: Dump Google Credentials to Disk
+        env:
+          GOOGLE_CREDENTIALS: ${{secrets.GOOGLE_CREDENTIALS}}
         run: |
-          echo "${{secrets.GOOGLE_CREDENTIALS}}" > credentials.json
+          cat << 'EOF' > credentials.json
+          $GOOGLE_CREDENTIALS
+          EOF
 
       - name: Run script
         env:
