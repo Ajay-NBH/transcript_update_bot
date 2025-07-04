@@ -1,8 +1,9 @@
 name: Run Python Script
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 */2 * * *'  # Runs every 2 hours
+    - cron: '0 */2 * * *'
 
 jobs:
   run-script:
