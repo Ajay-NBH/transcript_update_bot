@@ -7,8 +7,7 @@ import base64
 import traceback
 from email.mime.text import MIMEText
 import io # For GDrive downloads
-import re
-import markdown 
+import re 
 import json
 import fitz
 import requests
