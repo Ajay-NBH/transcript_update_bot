@@ -83,7 +83,7 @@ query Transcripts($limit: Int, $skip: Int) {
 """
 
 headers = {
-    "Authorization": f"Bearer {API_KEY}",
+    "Authorization": f"Bearer {FIREFLY_API_KEY}",
     "Content-Type": "application/json",
 }
 
