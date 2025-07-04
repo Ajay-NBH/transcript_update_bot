@@ -1,11 +1,10 @@
-PyMuPDF
 google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+python-pptx
+openpyxl
+PyMuPDF
+markdown
 google-generativeai
-pdfplumber
-gspread
-pandas
-tenacity
-tqdm
+dotenv
