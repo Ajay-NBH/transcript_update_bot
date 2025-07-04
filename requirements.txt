@@ -9,4 +9,3 @@ markdown
 google-generativeai
 python-dotenv
 requests
-email
