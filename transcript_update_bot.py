@@ -205,8 +205,10 @@ def write_data_into_sheets(sheets_service, sheet_id, range, data):
             body=body
         ).execute()
         print(f"Updated values: {data} in sheet: {sheet_id}")
+        return True
     except Exception as e:
         print(f"An error occured while writing {data} values in sheet: {sheet_id}: {e}")
+        return False
 
 def read_data_from_sheets(sheets_service, sheet_id, range):
 
@@ -532,8 +534,12 @@ def main():
             index = calendar_ids_from_master.index([cal_id]) + 2
             data = [[url, t["meeting_duration"]]]
             range = f"Meeting_data!I{index}:J{index}"
-            write_data_into_sheets(sheets_service, master_sheet_id, range, data)
-            print(f"Updated transcript in master sheet at row {index} for {t['event_name']}")
+            success = write_data_into_sheets(sheets_service, master_sheet_id, range, data)
+            if success:
+                print(f"Updated transcript in master sheet at row {index} for {t['event_name']}")
+            else:
+                print(f"Failed to update transcript in master sheet for {t['event_name']}")
+
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
@@ -581,10 +587,12 @@ def main():
             
             rng = f"Meeting_data!N{sheet_index}:AS{sheet_index}"
             
-            try:
-                write_data_into_sheets(sheets_service, master_sheet_id, rng, [data])
+            success = write_data_into_sheets(sheets_service, master_sheet_id, rng, [data])
+           
+            # Tagging the transcript as processed
+            
+            if success:
                 print(f"Updated analysis for doc ID: {doc_id} at row {sheet_index}")
-                # Tagging the transcript as processed
                 drive_service.files().update(
                     fileId=doc_id,
                     body={
@@ -593,10 +601,8 @@ def main():
                             }
                         }
                         ).execute()
-
-            except Exception as e:
-                print(f"An error occurred while writing analysis for doc ID: {doc_id} at row {sheet_index}: {e}")
-            
+            else:
+                print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
 
 
 
