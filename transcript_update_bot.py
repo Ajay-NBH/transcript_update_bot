@@ -575,14 +575,14 @@ def main():
             data = []
             for value in analysis.values():
                 if isinstance(value, str):
-                    data.append([value])
+                    data.append(value)
                 else:
-                    data.append([f"{value}"])
+                    data.append(f"{value}")
             
             rng = f"Meeting_data!N{sheet_index}:AS{sheet_index}"
             
             try:
-                write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                write_data_into_sheets(sheets_service, master_sheet_id, rng, [data])
                 print(f"Updated analysis for doc ID: {doc_id} at row {sheet_index}")
                 # Tagging the transcript as processed
                 drive_service.files().update(
