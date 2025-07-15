@@ -21,6 +21,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
+import enum
 
 SCOPES = [
     'https://www.googleapis.com/auth/calendar',
@@ -279,6 +280,13 @@ try:
 except Exception as e:
     print(f"Error configuring Gemini API: {e}")
 
+class Brand_Size(enum.Enum):
+    NATIONAL = "National"
+    REGIONAL = "Regional"
+    CITY_LEVEL = "City Level"
+    UNKNOWN = "Unknown"
+
+
 class ActionItem(BaseModel):
     owner: str
     task: str
@@ -288,8 +296,11 @@ class CompetitorInsight(BaseModel):
     competitor_name: str
     client_perception_or_insight: str
 
+
+
 class Analysis(BaseModel):
     """Pydantic model for the JSON structure returned by Gemini."""
+    Brand_Size: Brand_Size
     Meeting_Type: str
     Meeting_Agenda: str
     Key_Discussion_Points: list[str]
@@ -323,6 +334,9 @@ class Analysis(BaseModel):
     Identified_Missed_Opportunities: list[str]
     Pitched_Asset_Relevance_to_Needs: str
 
+    class Config:
+        use_enum_values = True  # Use enum values in the output
+
 def get_gemini_response_json(transcript_text, client):
     """Sends transcript text to Google Gemini API and retrieves raw insights text."""
 
@@ -344,40 +358,45 @@ def get_gemini_response_json(transcript_text, client):
 
         ## FIELD REFERENCE (name – description – type)
 
-        1.  **Meeting Type** – Introductory / Follow‑up / Closure discussion / Post‑closure execution / Execution review – *string*
-        2.  **Meeting Agenda** – one‑sentence goal – *string*
-        3. **Key Discussion Points** – major themes – *array of strings*
-        4. **Key Questions** – questions asked by brand – *array of strings*
-        5. **Marketing Assets** – assets pitched by NBH – *array of strings*
-        6. **Competition Discussion** – summary or “Not Discussed” – *string*
-        7. **Action Items** – follow‑ups – *array of objects*
+        1.  **Brand Size** – National / Regional / City Level / Unknown – *enum*
+            └─  `National` for brands which are planning a nation wide campaign or which are piloting in few cities and plan to expand the expand nationwide,
+                `Regional` for brands operating in a specific region or state or bigger brands which only want to target a specific region or state,
+                `City Level` for brands focused on a single city or locality,
+                `Unknown` if the brand size cannot be determined from the transcript.
+        2.  **Meeting Type** – Introductory / Follow‑up / Closure discussion / Post‑closure execution / Execution review – *string*
+        3.  **Meeting Agenda** – one‑sentence goal – *string*
+        4. **Key Discussion Points** – major themes – *array of strings*
+        5. **Key Questions** – questions asked by brand – *array of strings*
+        6. **Marketing Assets** – assets pitched by NBH – *array of strings*
+        7. **Competition Discussion** – summary or “Not Discussed” – *string*
+        8. **Action Items** – follow‑ups – *array of objects*
             └─  format: `{{{{ "owner": "", "task": "", "priority": "" }}}}` **`The 'priority' should be one of the following string values: 'Critical', 'Fast-Track', 'Normal', or 'Sometime/Maybe', judged based on urgency and impact on closure probability (higher impact on closure probability will lead to higher priority).`**
-        8. **Rebuttal Handling** – **`Summary of objections raised by the client and an assessment of how effectively the NBH salesperson handled them (e.g., 'Effectively addressed pricing concerns by highlighting value', 'Struggled to counter objection about X feature', 'Objection Y was acknowledged but not fully resolved'). – string`**
-        9. **Rapport Building** – quality of rapport building by the sales rep– *string*
-        10. **Improvement Areas** – gaps to improve by the NBH salesperson – *array of strings*
-        11. **Other Sales Parameters** – any extra sales observations – *array of strings*
-        12. **Budget or Scope** – narrative estimate of client's budget or project scope discussed – *string*
-        13. **Lead Category** – High / Medium / Low – *string* >> This categorization would need to be done on the basis of the relevance of the POC and the Brand which can lead to probable closure
-        14. **Positive Factors** – deal positives – *array of strings*
-        15. **Negative Factors** – deal risks – *array of strings*
-        16. **Closure Score** – likelihood 0‑100 – *number*
-        17. **Brand Traits** – personality traits of the client brand – *array of strings*
-        18. **Tone of Voice** – client brand tone – *string*
-        19. **Values & Mission** – client brand values & mission, if discussed – *string*
-        **`20. Customer Needs – List the explicit needs, goals, or challenges articulated by the client during the meeting. Focus on what the client *said* they are trying to achieve or solve. This will be used to assess the relevance of pitched assets. – *array of strings*`**
-        **`21. Need Identification – Assessment of the primary NBH salesperson's effectiveness in uncovering and understanding the client's core business needs and objectives. Provide a brief analysis (2-3 sentences), noting if discovery was thorough, superficial, or if key needs might have been missed. Include examples if illustrative. If not discussed or unclear, state so. – *string*`**
-        **`22. Sales Pitch Rating – Overall rating of the sales pitch by the NBH salesperson on a scale of 1 - 10. Based on Rebuttal Handling, Rapport Building, Need Identification, Demo Flow, Communication Efficacy, Value Proposition Articulation, Product Knowledge Displayed and other relevant parameters observed in the transcript. – *number*`**
-        **`23. Client Pain Points – Explicit problems or challenges the client is trying to solve, as stated by them. – *array of strings*`**
-        **`24. Value Proposition Articulation – Summary of how effectively the NBH salesperson linked NBH's general offerings and value to the client's specific stated needs, pain points, or business situation. Note if connections were strong, weak, or missed. – *string*`**
-        **`25. Product Knowledge Displayed – Assessment of the NBH salesperson's product/solution knowledge as demonstrated in the call (e.g., Confident and detailed, Generally good but hesitant on X, Lacked depth in Y). Note if a demo was given and its perceived effectiveness by the client, if mentioned. – *string*`**
-        **`26. Call Effectiveness & Control – Assessment of how well the NBH salesperson managed the call flow, adhered to an agenda (if stated or apparent), and controlled the conversation. Note if the call stayed on track or frequently deviated. – *string*`**
-        **`27. Next Steps Clarity & Commitment – Were the immediate next steps in the sales process clearly outlined and agreed upon by the client during the call? (e.g., 'Client agreed to a follow-up demo next Tuesday', 'Next steps unclear', 'NBH to send proposal, client to review with team by Friday'). – *string*`**
-        **`28. Overall Client Sentiment – Overall mood and engagement level of the client during the meeting. Choose one or a short description: "Highly Engaged & Positive / Attentive & Inquisitive / Neutral & Reserved / Skeptical / Disengaged / Negative". – *string*`**
-        **`29. Specific Competitor Insights – Insights into competitors mentioned by the client. – *array of objects*`**
+        9. **Rebuttal Handling** – **`Summary of objections raised by the client and an assessment of how effectively the NBH salesperson handled them (e.g., 'Effectively addressed pricing concerns by highlighting value', 'Struggled to counter objection about X feature', 'Objection Y was acknowledged but not fully resolved'). – string`**
+        10. **Rapport Building** – quality of rapport building by the sales rep– *string*
+        11. **Improvement Areas** – gaps to improve by the NBH salesperson – *array of strings*
+        12. **Other Sales Parameters** – any extra sales observations – *array of strings*
+        13. **Budget or Scope** – narrative estimate of client's budget or project scope discussed – *string*
+        14. **Lead Category** – High / Medium / Low – *string* >> This categorization would need to be done on the basis of the relevance of the POC and the Brand which can lead to probable closure
+        15. **Positive Factors** – deal positives – *array of strings*
+        16. **Negative Factors** – deal risks – *array of strings*
+        17. **Closure Score** – likelihood 0‑100 – *number*
+        18. **Brand Traits** – personality traits of the client brand – *array of strings*
+        19. **Tone of Voice** – client brand tone – *string*
+        20. **Values & Mission** – client brand values & mission, if discussed – *string*
+        **`21. Customer Needs – List the explicit needs, goals, or challenges articulated by the client during the meeting. Focus on what the client *said* they are trying to achieve or solve. This will be used to assess the relevance of pitched assets. – *array of strings*`**
+        **`22. Need Identification – Assessment of the primary NBH salesperson's effectiveness in uncovering and understanding the client's core business needs and objectives. Provide a brief analysis (2-3 sentences), noting if discovery was thorough, superficial, or if key needs might have been missed. Include examples if illustrative. If not discussed or unclear, state so. – *string*`**
+        **`23. Sales Pitch Rating – Overall rating of the sales pitch by the NBH salesperson on a scale of 1 - 10. Based on Rebuttal Handling, Rapport Building, Need Identification, Demo Flow, Communication Efficacy, Value Proposition Articulation, Product Knowledge Displayed and other relevant parameters observed in the transcript. – *number*`**
+        **`24. Client Pain Points – Explicit problems or challenges the client is trying to solve, as stated by them. – *array of strings*`**
+        **`25. Value Proposition Articulation – Summary of how effectively the NBH salesperson linked NBH's general offerings and value to the client's specific stated needs, pain points, or business situation. Note if connections were strong, weak, or missed. – *string*`**
+        **`26. Product Knowledge Displayed – Assessment of the NBH salesperson's product/solution knowledge as demonstrated in the call (e.g., Confident and detailed, Generally good but hesitant on X, Lacked depth in Y). Note if a demo was given and its perceived effectiveness by the client, if mentioned. – *string*`**
+        **`27. Call Effectiveness & Control – Assessment of how well the NBH salesperson managed the call flow, adhered to an agenda (if stated or apparent), and controlled the conversation. Note if the call stayed on track or frequently deviated. – *string*`**
+        **`28. Next Steps Clarity & Commitment – Were the immediate next steps in the sales process clearly outlined and agreed upon by the client during the call? (e.g., 'Client agreed to a follow-up demo next Tuesday', 'Next steps unclear', 'NBH to send proposal, client to review with team by Friday'). – *string*`**
+        **`29. Overall Client Sentiment – Overall mood and engagement level of the client during the meeting. Choose one or a short description: "Highly Engaged & Positive / Attentive & Inquisitive / Neutral & Reserved / Skeptical / Disengaged / Negative". – *string*`**
+        **`30. Specific Competitor Insights – Insights into competitors mentioned by the client. – *array of objects*`**
             **`└─  format: {{{{ "competitor_name": "", "client_perception_or_insight": "" }}}}`**
-        **`30. Key Managerial Summary – The single most important takeaway or status update from this meeting for a sales manager (1-2 sentences). – *string*`**
-        **`31. Identified Missed Opportunities – Opportunities or client cues that the NBH salesperson seemed to miss or did not fully explore during the call. – *array of strings*`**
-        **`32. Pitched Asset Relevance to Needs – Based *solely on the information within the transcript*, assess the relevance of the marketing assets pitched by the NBH salesperson to the client's explicitly stated needs, challenges, or goals identified during the call. Did the salesperson attempt to connect the pitched assets to these identified client needs? How clear and logical was this connection (e.g., Very clear, Somewhat clear, Unclear, Not addressed, Connection made but seemed weak/irrelevant)? Provide a brief narrative summary (2-4 sentences). If specific assets were pitched, mention if their relevance to a stated need was well-explained, poorly explained, or not explained by the salesperson. If no specific needs were clearly articulated by the client, or if no assets were pitched in direct response to an identified need, note that. – *string*`**
+        **`31. Key Managerial Summary – The single most important takeaway or status update from this meeting for a sales manager (1-2 sentences). – *string*`**
+        **`32. Identified Missed Opportunities – Opportunities or client cues that the NBH salesperson seemed to miss or did not fully explore during the call. – *array of strings*`**
+        **`33. Pitched Asset Relevance to Needs – Based *solely on the information within the transcript*, assess the relevance of the marketing assets pitched by the NBH salesperson to the client's explicitly stated needs, challenges, or goals identified during the call. Did the salesperson attempt to connect the pitched assets to these identified client needs? How clear and logical was this connection (e.g., Very clear, Somewhat clear, Unclear, Not addressed, Connection made but seemed weak/irrelevant)? Provide a brief narrative summary (2-4 sentences). If specific assets were pitched, mention if their relevance to a stated need was well-explained, poorly explained, or not explained by the salesperson. If no specific needs were clearly articulated by the client, or if no assets were pitched in direct response to an identified need, note that. – *string*`**
 
         
         -------------------------------------------------------------------------
@@ -585,7 +604,7 @@ def main():
                 else:
                     data.append(f"{value}")
             
-            rng = f"Meeting_data!N{sheet_index}:AS{sheet_index}"
+            rng = f"Meeting_data!K{sheet_index}:AQ{sheet_index}"
             
             success = write_data_into_sheets(sheets_service, master_sheet_id, rng, [data])
            
