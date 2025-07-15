@@ -205,8 +205,8 @@ def write_data_into_sheets(sheets_service, sheet_id, range, data):
             body=body
         ).execute()
         print(f"Updated values: {data} in sheet: {sheet_id}")
-    except:
-        print(f"An error occured while writing {data} values in sheet: {sheet_id}")
+    except Exception as e:
+        print(f"An error occured while writing {data} values in sheet: {sheet_id}: {e}")
 
 def read_data_from_sheets(sheets_service, sheet_id, range):
 
