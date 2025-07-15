@@ -277,6 +277,15 @@ try:
 except Exception as e:
     print(f"Error configuring Gemini API: {e}")
 
+class ActionItem(BaseModel):
+    owner: str
+    task: str
+    priority: str
+
+class CompetitorInsight(BaseModel):
+    competitor_name: str
+    client_perception_or_insight: str
+
 class Analysis(BaseModel):
     """Pydantic model for the JSON structure returned by Gemini."""
     Meeting_Type: str
@@ -285,7 +294,7 @@ class Analysis(BaseModel):
     Key_Questions: list[str]
     Marketing_Assets: list[str]
     Competition_Discussion: str
-    Action_Items: list[dict]
+    Action_Items: list[ActionItem]
     Rebuttal_Handling: str
     Rapport_Building: str
     Improvement_Areas: list[str]
@@ -307,7 +316,7 @@ class Analysis(BaseModel):
     Call_Effectiveness_and_Control: str
     Next_Steps_Clarity_and_Commitment: str
     Overall_Client_Sentiment: str
-    Specific_Competitor_Insights: list[dict]
+    Specific_Competitor_Insights: list[CompetitorInsight]
     Key_Managerial_Summary: str
     Identified_Missed_Opportunities: list[str]
     Pitched_Asset_Relevance_to_Needs: str
