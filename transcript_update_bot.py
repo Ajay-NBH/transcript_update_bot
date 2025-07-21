@@ -556,6 +556,15 @@ def main():
             success = write_data_into_sheets(sheets_service, master_sheet_id, range, data)
             if success:
                 print(f"Updated transcript in master sheet at row {index} for {t['event_name']}")
+                # Resetting the owner sheet update flag
+                print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
+                data = [["TRUE"]]
+                rng = f"Meeting_data!AX{index}:AX{index}"
+                success2 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                if success2:
+                    print(f"Owner sheet update flag reset successfully for {t['event_name']}")
+                else:
+                    print(f"Failed to reset owner sheet update flag for {t['event_name']}")
             else:
                 print(f"Failed to update transcript in master sheet for {t['event_name']}")
 
@@ -620,6 +629,15 @@ def main():
                             }
                         }
                         ).execute()
+                # Resetting the owner sheet update flag
+                print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
+                data = [["TRUE"]]
+                rng = f"Meeting_data!AX{sheet_index}:AX{sheet_index}"
+                success2 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                if success2:
+                    print(f"Owner sheet update flag reset successfully for {t['event_name']}")
+                else:
+                    print(f"Failed to reset owner sheet update flag for {t['event_name']}")
             else:
                 print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
 
