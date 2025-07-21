@@ -202,7 +202,7 @@ def write_data_into_sheets(sheets_service, sheet_id, range, data):
         result = sheets_service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
             range=range,
-            valueInputOption='RAW',
+            valueInputOption='USER_ENTERED',
             body=body
         ).execute()
         print(f"Updated values: {data} in sheet: {sheet_id}")
