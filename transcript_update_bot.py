@@ -630,14 +630,14 @@ def main():
                         }
                         ).execute()
                 # Resetting the owner sheet update flag
-                print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
+                print(f"Resetting the owner sheet update flag to TRUE at row {index}")
                 data = [["TRUE"]]
                 rng = f"Meeting_data!AX{sheet_index}:AX{sheet_index}"
                 success2 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
                 if success2:
-                    print(f"Owner sheet update flag reset successfully for {t['event_name']}")
+                    print(f"Owner sheet update flag reset successfully")
                 else:
-                    print(f"Failed to reset owner sheet update flag for {t['event_name']}")
+                    print(f"Failed to reset owner sheet update flag")
             else:
                 print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
 
