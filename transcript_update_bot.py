@@ -363,6 +363,7 @@ def get_gemini_response_json(transcript_text, client):
                 `Regional` for brands operating in a specific region or state or bigger brands which only want to target a specific region or state,
                 `City Level` for brands focused on a single city or locality,
                 `Unknown` if the brand size cannot be determined from the transcript.
+                **If brand size cannot be inferred from the scope of campaign, then assign the brand size (Nationa, Regional, City Level, Unknown) based on brand's business size`**
         2.  **Meeting Type** – Introductory / Follow‑up / Closure discussion / Post‑closure execution / Execution review – *string*
         3.  **Meeting Agenda** – one‑sentence goal – *string*
         4. **Key Discussion Points** – major themes – *array of strings*
