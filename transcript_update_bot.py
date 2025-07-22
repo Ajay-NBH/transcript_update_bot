@@ -186,7 +186,7 @@ def create_google_doc_in_folder(drive_service, folder_id, doc_name, text, transc
         
         print(f"Tagged the file: {created['name']} with transcript id: {transcript_id}")
     
-    except Error as e:
+    except Exception as e:
         print(f"An error occured while creating google doc {e}")
     return doc_id
 
