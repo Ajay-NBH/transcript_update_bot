@@ -588,7 +588,7 @@ def main():
         if sheet_index:
             t_dict["id"] = t[0].split('/')[5]
             t_dict["sheet_index"] = sheet_index+2
-        t_ids.append(t_dict)
+            t_ids.append(t_dict)
     
     for t in t_ids[-300:]:
         doc_id = t["id"]
