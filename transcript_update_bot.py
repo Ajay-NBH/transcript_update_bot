@@ -572,9 +572,10 @@ def main():
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
+    transcript_urls_from_ts_sheet = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!D2:D")
     t_ids = []
 
-    for i, t in enumerate(transcript_urls_from_master):
+    for i, t in enumerate(transcript_urls_from_ts_sheet):
         t_dict = {}
         
         if len(t) == 0:
@@ -584,10 +585,11 @@ def main():
             continue
             
         t_dict["id"] = t[0].split('/')[5]
-        t_dict["sheet_index"] = i+2
+        sheet_index = transcript_urls_from_master.index(t) if t in transcript_urls_from_master else None
+        t_dict["sheet_index"] = sheet_index+2
         t_ids.append(t_dict)
     
-    for t in t_ids[-200:]:
+    for t in t_ids[-300:]:
         doc_id = t["id"]
         sheet_index = t["sheet_index"]
         file = drive_service.files().get(
