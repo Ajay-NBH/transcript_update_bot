@@ -339,9 +339,9 @@ class Analysis(BaseModel):
 
 audit_params = ["Rebuttal_Handling", "Rapport_Building", 
                 "Improvement_Areas", "Other_Sales_Parameters", 
-                "Need Identification", "Value_Proposition_Articulation", 
+                "Need_Identification", "Value_Proposition_Articulation", 
                 "Product_Knowledge_Displayed", "Call_Effectiveness_and_Control", 
-                "Next_Steps_Clarity_and_Commitment", "Missed_Opportunities", 
+                "Next_Steps_Clarity_and_Commitment", "Identified_Missed_Opportunities", 
                 "Pitched_Asset_Relevance_to_Needs"
                 ]  # Parameters to be audited
 
