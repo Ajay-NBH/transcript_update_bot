@@ -337,6 +337,14 @@ class Analysis(BaseModel):
     class Config:
         use_enum_values = True  # Use enum values in the output
 
+audit_params = ["Rebuttal_Handling", "Rapport_Building", 
+                "Improvement_Areas", "Other_Sales_Parameters", 
+                "Need Identification", "Value_Proposition_Articulation", 
+                "Product_Knowledge_Displayed", "Call_Effectiveness_and_Control", 
+                "Next_Steps_Clarity_and_Commitment", "Missed_Opportunities", 
+                "Pitched_Asset_Relevance_to_Needs"
+                ]  # Parameters to be audited
+
 def get_gemini_response_json(prompt_template, transcript_text, client):
     """Sends transcript text to Google Gemini API and retrieves raw insights text."""
 
@@ -362,7 +370,34 @@ def get_gemini_response_json(prompt_template, transcript_text, client):
         print(f"Google GenAI error: {e}")
         return None
 
+def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
 
+    try:
+        if not values1 or not values2:
+            print("No data to write in one or both ranges.")
+            return None
+        body = {
+            "valueInputOption": value_input_option,
+            "data": [
+                {"range": range1, "values": values1},
+                {"range": range2, "values": values2},
+            ],
+        }
+
+        resp = (
+            sheets_service.spreadsheets()
+            .values()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+            .execute()
+        )
+
+        total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
+        print(f"Done. {total_cells} cells updated across both ranges.")
+        return resp
+
+    except HttpError as err:
+        print(f"Sheets API error: {err}")
+        return None
 
 def main():
     transcripts = fetch_all_transcripts()
@@ -491,14 +526,17 @@ def main():
             index = calendar_ids_from_master.index([cal_id]) + 2
             data = [[url, t["meeting_duration"]]]
             range = f"Meeting_data!I{index}:J{index}"
-            success = write_data_into_sheets(sheets_service, master_sheet_id, range, data)
+            audit_rnge = f"Audit_and_Training!I{index}:J{index}"
+            # Write the transcript URL and meeting duration into the master sheet
+            success = batch_write_two_ranges(sheets_service, master_sheet_id, range, data, audit_rnge, data)
             if success:
                 print(f"Updated transcript in master sheet at row {index} for {t['event_name']}")
                 # Resetting the owner sheet update flag
                 print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
                 data = [["TRUE"]]
                 rng = f"Meeting_data!AX{index}:AX{index}"
-                success2 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                audit_rnge = f"Audit_and_Training!AX{index}:AX{index}"
+                success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully for {t['event_name']}")
                 else:
@@ -548,15 +586,20 @@ def main():
                 print(f"Failed to get valid analysis for doc ID: {doc_id}. Skipping update.")
                 continue
             data = []
-            for value in analysis.values():
+            audit_data = []
+            for key, value in analysis.items():
                 if isinstance(value, str):
                     data.append(value)
+                    if key in audit_params:
+                        audit_data.append(value)
                 else:
                     data.append(f"{value}")
+                    if key in audit_params:
+                        audit_data.append(f"{value}")
             
             rng = f"Meeting_data!K{sheet_index}:AQ{sheet_index}"
-            
-            success = write_data_into_sheets(sheets_service, master_sheet_id, rng, [data])
+            rng_audit = f"Audit_and_Training!M{sheet_index}:W{sheet_index}"
+            success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
            
             # Tagging the transcript as processed
             
@@ -574,7 +617,8 @@ def main():
                 print(f"Resetting the owner sheet update flag to TRUE at row {index}")
                 data = [["TRUE"]]
                 rng = f"Meeting_data!AX{sheet_index}:AX{sheet_index}"
-                success2 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                audit_rnge = f"Audit_and_Training!AX{sheet_index}:AX{sheet_index}"
+                success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully")
                 else:
