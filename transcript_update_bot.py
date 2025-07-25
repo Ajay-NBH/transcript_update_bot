@@ -535,7 +535,7 @@ def main():
                 print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
                 data = [["TRUE"]]
                 rng = f"Meeting_data!AX{index}:AX{index}"
-                audit_rnge = f"Audit_and_Training!AX{index}:AX{index}"
+                audit_rnge = f"Audit_and_Training!AD{index}:AD{index}"
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully for {t['event_name']}")
@@ -617,7 +617,7 @@ def main():
                 print(f"Resetting the owner sheet update flag to TRUE at row {index}")
                 data = [["TRUE"]]
                 rng = f"Meeting_data!AX{sheet_index}:AX{sheet_index}"
-                audit_rnge = f"Audit_and_Training!AX{sheet_index}:AX{sheet_index}"
+                audit_rnge = f"Audit_and_Training!AD{sheet_index}:AD{sheet_index}"
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully")
