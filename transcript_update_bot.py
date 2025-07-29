@@ -337,7 +337,7 @@ class Analysis(BaseModel):
     class Config:
         use_enum_values = True  # Use enum values in the output
 
-audit_params = ["Rebuttal_Handling", "Rapport_Building", 
+audit_params = ["Brand_Size","Meeting_Type","Rebuttal_Handling", "Rapport_Building", 
                 "Improvement_Areas", "Other_Sales_Parameters", 
                 "Need_Identification", "Value_Proposition_Articulation", 
                 "Product_Knowledge_Displayed", "Call_Effectiveness_and_Control", 
@@ -598,7 +598,7 @@ def main():
                         audit_data.append(f"{value}")
             
             rng = f"Meeting_data!K{sheet_index}:AQ{sheet_index}"
-            rng_audit = f"Audit_and_Training!M{sheet_index}:W{sheet_index}"
+            rng_audit = f"Audit_and_Training!K{sheet_index}:W{sheet_index}"
             success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
            
             # Tagging the transcript as processed
