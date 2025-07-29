@@ -344,6 +344,17 @@ audit_params = ["Brand_Size","Meeting_Type","Rebuttal_Handling", "Rapport_Buildi
                 "Next_Steps_Clarity_and_Commitment", "Identified_Missed_Opportunities", 
                 "Pitched_Asset_Relevance_to_Needs"
                 ]  # Parameters to be audited
+business_params = ["Brand_Size", "Meeting_Type", "Meeting_Agenda", "Key_Discussion_Points",
+                  "Key_Questions", "Marketing_Assets", "Competition_Discussion",
+                  "Action_Items", "Budget_or_Scope",
+                  "Lead_Category", "Positive_Factors", "Negative_Factors",
+                  "Closure_Score", "Brand_Traits", "Tone_of_Voice",
+                  "Values_and_Mission", "Customer_Needs",
+                  "Sales_Pitch_Rating", "Client_Pain_Points",
+                  "Overall_Client_Sentiment", 
+                  "Specific_Competitor_Insights",
+                  "Key_Managerial_Summary"
+                ]  # Parameters to be written in master sheet
 
 def get_gemini_response_json(prompt_template, transcript_text, client):
     """Sends transcript text to Google Gemini API and retrieves raw insights text."""
@@ -534,7 +545,7 @@ def main():
                 # Resetting the owner sheet update flag
                 print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
                 data = [["TRUE"]]
-                rng = f"Meeting_data!AX{index}:AX{index}"
+                rng = f"Meeting_data!AH{index}:AH{index}"
                 audit_rnge = f"Audit_and_Training!AD{index}:AD{index}"
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
@@ -589,15 +600,17 @@ def main():
             audit_data = []
             for key, value in analysis.items():
                 if isinstance(value, str):
-                    data.append(value)
                     if key in audit_params:
                         audit_data.append(value)
+                    if key in business_params:
+                        data.append(value)
                 else:
-                    data.append(f"{value}")
                     if key in audit_params:
                         audit_data.append(f"{value}")
+                    if key in business_params:
+                        data.append(f"{value}")
             
-            rng = f"Meeting_data!K{sheet_index}:AQ{sheet_index}"
+            rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
             rng_audit = f"Audit_and_Training!K{sheet_index}:W{sheet_index}"
             success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
            
@@ -616,7 +629,7 @@ def main():
                 # Resetting the owner sheet update flag
                 print(f"Resetting the owner sheet update flag to TRUE at row {index}")
                 data = [["TRUE"]]
-                rng = f"Meeting_data!AX{sheet_index}:AX{sheet_index}"
+                rng = f"Meeting_data!AH{sheet_index}:AH{sheet_index}"
                 audit_rnge = f"Audit_and_Training!AD{sheet_index}:AD{sheet_index}"
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
