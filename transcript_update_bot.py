@@ -356,14 +356,15 @@ business_params = ["Brand_Size", "Meeting_Type", "Meeting_Agenda", "Key_Discussi
                   "Key_Managerial_Summary"
                 ]  # Parameters to be written in master sheet
 
-def get_gemini_response_json(prompt_template, transcript_text, client):
+def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client):
     """Sends transcript text to Google Gemini API and retrieves raw insights text."""
 
 #     department_prompt = department_prompts.get(department, "General Analysis")
     # meeting_duration = extract_meeting_duration(transcript_text)  # Extract duration
     
     prompt_json = prompt_template.format(
-    transcript_text=transcript_text)
+    transcript_text=transcript_text,
+    pm_brief_text=pm_brief_text)
 
     config = types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -577,6 +578,7 @@ def main():
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
     transcript_urls_from_ts_sheet = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!D2:D")
+    pm_brief_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!H2:H")
     t_ids = []
 
     for i, t in enumerate(transcript_urls_from_ts_sheet):
@@ -605,12 +607,21 @@ def main():
         processed = file.get('appProperties').get('processed', None)
         
         if not processed:
+            if len(pm_brief_urls_from_master >= sheet_index-1):
+                pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
+                pm_brief_id = pm_brief_url.split('/')[5] if pm_brief_url else None
+            
             transcript_text = read_doc_text(docs_service, doc_id)
+            if pm_brief_id:
+                pm_brief_text = read_doc_text(docs_service, pm_brief_id)
+            else:
+                pm_brief_text = ""
+
             if not transcript_text:
                 print(f"Transcript text is empty for doc ID: {doc_id}. Skipping analysis.")
                 continue
             print(f"Running analysis for doc ID: {doc_id}")
-            analysis = get_gemini_response_json(prompt_template, transcript_text, client)
+            analysis = get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client)
             if analysis is None:
                 print(f"Failed to get valid analysis for doc ID: {doc_id}. Skipping update.")
                 continue
