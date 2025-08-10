@@ -22,6 +22,8 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 import enum
+from data_config import column_index
+import pandas as pd
 
 SCOPES = [
     'https://www.googleapis.com/auth/calendar',
@@ -418,6 +420,18 @@ def main():
     transcript_sheet_id = "1tEwCsqu-lThnaf_Z8i_X4-pUNzEYuy62Q-fkzsvGRzI"
     transcript_folder_id = "1EqbAFfiaKWJh051mX_fzIvig917Ofvy7"
     master_sheet_id = "1xtB1KUAXJ6IKMQab0Sb0NJfQppCKLkUERZ4PMZlNfOw"
+    master_sheet_column_headers = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!A1:BU1")[0] #reading the column headers from master sheet
+    owner_column_master = master_sheet_column_headers.index("Owner") + 1 # Getting the index of Owner column in master sheet
+    owner_column_letter_master = column_index[f"{owner_column_master}"] # Getting the column letter for Owner column
+    owner_update_column_master = master_sheet_column_headers.index("Owner sheet to be updated") + 1
+    owner_update_column_master_letter = column_index[f"{owner_update_column_master}"] # Getting the column letter for Owner sheet to be updated column
+
+    audit_sheet_column_headers = read_data_from_sheets(sheets_service, master_sheet_id, "Audit_and_Training!A1:BU1")[0] #reading the column headers from audit and training sheet
+    owner_column_audit = audit_sheet_column_headers.index("Owner") + 1 # Getting the index of Owner column in audit sheet
+    owner_column_letter_audit = column_index[f"{owner_column_audit}"] # Getting the column letter for Owner column
+    owner_update_column_audit = audit_sheet_column_headers.index("Owner sheet to be updated") + 1
+    owner_update_column_audit_letter = column_index[f"{owner_update_column_audit}"] # Getting the column letter for Owner sheet to be updated column
+
     # Read the transcript IDs from the transcript sheet
     transcript_ids = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!C2:C")
 
@@ -553,8 +567,8 @@ def main():
                 # Resetting the owner sheet update flag
                 print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
                 data = [["TRUE"]]
-                rng = f"Meeting_data!AH{index}:AH{index}"
-                audit_rnge = f"Audit_and_Training!AD{index}:AD{index}"
+                rng = f"Meeting_data!{owner_update_column_master_letter}{index}:{owner_update_column_master_letter}{index}"
+                audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{index}:{owner_update_column_audit_letter}{index}"
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully for {t['event_name']}")
@@ -567,7 +581,8 @@ def main():
             if meeting_done:
                 print(f"Updating meeting_conducted status for {t['event_name']} at row {index}")
                 data = [[meeting_done]]
-                rng = f"Meeting_data!AK{index}:AK{index}"
+                conducted_status_flag_column = column_index[str(master_sheet_column_headers.index("Meeting Done") + 1)]
+                rng = f"Meeting_data!{conducted_status_flag_column}{index}:{conducted_status_flag_column}{index}"
                 success3 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
                 if success3:
                     print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
@@ -658,8 +673,8 @@ def main():
                 # Resetting the owner sheet update flag
                 print(f"Resetting the owner sheet update flag to TRUE at row {index}")
                 data = [["TRUE"]]
-                rng = f"Meeting_data!AH{sheet_index}:AH{sheet_index}"
-                audit_rnge = f"Audit_and_Training!AD{sheet_index}:AD{sheet_index}"
+                rng = f"Meeting_data!{owner_update_column_master_letter}{sheet_index}:{owner_update_column_master_letter}{sheet_index}"
+                audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{sheet_index}:{owner_update_column_audit_letter}{sheet_index}"
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully")

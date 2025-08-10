@@ -10,3 +10,4 @@ google-generativeai
 python-dotenv
 requests
 google-genai
+pandas
