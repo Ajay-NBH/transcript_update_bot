@@ -431,6 +431,7 @@ def main():
     prompt_template = ts_analysis_prompt[0][0]
 
     for i, t in enumerate(transcripts):
+        meeting_conducted = "Not Conducted"
         t_id = t["id"]
         t_event_id = t["calendar_id"]
         t_sentences = t["sentences"]
@@ -441,6 +442,8 @@ def main():
         else:
             t_complete_text = complete_transcript(t_sentences)
             meeting_duration = (t_sentences[-1]["end_time"] - t_sentences[0]["start_time"])/60
+            if meeting_duration > 10.0 and len(t_complete_text) > 10:
+                meeting_conducted = "Conducted"
             meeting_duration = f"{meeting_duration: .2f}"
             
         if [t_id] in transcript_ids: # If the t_id exists in transcript sheet then do not process it
@@ -452,8 +455,9 @@ def main():
             
             ff_url = f"https://app.fireflies.ai/view/{t_id}"
 
+
             # Write data into transcript record sheet
-            data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration]]
+            data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration, meeting_conducted]]
 
             body = {
                 'values': data_ts_sheet
@@ -486,7 +490,7 @@ def main():
             ff_url = f"https://app.fireflies.ai/view/{t_id}"
 
             # Write data into transcript record sheet
-            data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration]]
+            data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration, meeting_conducted]]
 
             body = {
                 'values': data_ts_sheet
@@ -510,7 +514,7 @@ def main():
 
     print("All transcripts processed successfully")
     # Updating master sheet with the doc links by comparing with the transcript sheet
-    transcript_sheet_data = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!A2:F")
+    transcript_sheet_data = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!A2:G")
     ts_dict = []
     for t in transcript_sheet_data:
         dict = {}
@@ -519,10 +523,12 @@ def main():
         dict["transcript_id"] = t[2]
         dict["transcript_url"] = t[3]
         dict["firefly_url"] = t[4]
-        if len(t) == 6:
+        if len(t) > 5:
             dict["meeting_duration"] = t[5]
+            dict["meeting_conducted"] = t[6] if len(t) > 6 else ''
         else:
             dict["meeting_duration"] = ''
+            dict["meeting_conducted"] = ''
         ts_dict.append(dict)
     
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
@@ -531,6 +537,7 @@ def main():
     for t in ts_dict:
         url = t["transcript_url"]
         cal_id = t["calendar_id"]
+        meeting_done = t.get("meeting_conducted", None)
         if [url] in transcript_urls_from_master:
             continue
         if [cal_id] in calendar_ids_from_master:
@@ -554,6 +561,17 @@ def main():
                     print(f"Failed to reset owner sheet update flag for {t['event_name']}")
             else:
                 print(f"Failed to update transcript in master sheet for {t['event_name']}")
+            
+            # If the meeting_conducted status is present, update the meeting_conducted column in the master sheet
+            if meeting_done:
+                print(f"Updating meeting_conducted status for {t['event_name']} at row {index}")
+                data = [[meeting_done]]
+                rng = f"Meeting_data!AK{index}:AK{index}"
+                success3 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                if success3:
+                    print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
+                else:
+                    print(f"Failed to update meeting_conducted status for {t['event_name']} at row {index}")
 
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
