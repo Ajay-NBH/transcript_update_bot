@@ -335,6 +335,7 @@ class Analysis(BaseModel):
     Key_Managerial_Summary: str
     Identified_Missed_Opportunities: list[str]
     Pitched_Asset_Relevance_to_Needs: str
+    Pre_vs_Post_Meeting_Score: str
 
     class Config:
         use_enum_values = True  # Use enum values in the output
@@ -344,7 +345,7 @@ audit_params = ["Brand_Size","Meeting_Type","Rebuttal_Handling", "Rapport_Buildi
                 "Need_Identification", "Value_Proposition_Articulation", 
                 "Product_Knowledge_Displayed", "Call_Effectiveness_and_Control", 
                 "Next_Steps_Clarity_and_Commitment", "Identified_Missed_Opportunities", 
-                "Pitched_Asset_Relevance_to_Needs"
+                "Pitched_Asset_Relevance_to_Needs", "Pre_vs_Post_Meeting_Score"
                 ]  # Parameters to be audited
 business_params = ["Brand_Size", "Meeting_Type", "Meeting_Agenda", "Key_Discussion_Points",
                   "Key_Questions", "Marketing_Assets", "Competition_Discussion",
@@ -655,7 +656,7 @@ def main():
                         data.append(f"{value}")
             
             rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
-            rng_audit = f"Audit_and_Training!K{sheet_index}:W{sheet_index}"
+            rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
             success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
            
             # Tagging the transcript as processed
