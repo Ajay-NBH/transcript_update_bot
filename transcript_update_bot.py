@@ -623,6 +623,7 @@ def main():
         processed = file.get('appProperties').get('processed', None)
         
         if not processed:
+            pm_brief_id = None
             if len(pm_brief_urls_from_master) >= sheet_index-1:
                 if pm_brief_urls_from_master[sheet_index-2]:
                     pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
