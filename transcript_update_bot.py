@@ -624,8 +624,9 @@ def main():
         
         if not processed:
             if len(pm_brief_urls_from_master) >= sheet_index-1:
-                pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
-                pm_brief_id = pm_brief_url.split('/')[5] if pm_brief_url else None
+                if pm_brief_urls_from_master[sheet_index-2]:
+                    pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
+                    pm_brief_id = pm_brief_url.split('/')[5] if pm_brief_url else None
             
             transcript_text = read_doc_text(docs_service, doc_id)
             if pm_brief_id:
