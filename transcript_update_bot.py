@@ -487,6 +487,7 @@ def main():
                     body=body
                 ).execute()
                 print(f"Appended row: {t_title} to transcript sheet")
+                time.sleep(1.1) # <--- ADD THIS LINE to slow down writes
             except:
                 print("An error occurred while writing into sheets")
 
@@ -589,7 +590,7 @@ def main():
                     print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
                 else:
                     print(f"Failed to update meeting_conducted status for {t['event_name']} at row {index}")
-
+                time.sleep(1.1) # <--- ADD THIS LINE at the end of the if-block
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
@@ -685,6 +686,8 @@ def main():
                     print(f"Failed to reset owner sheet update flag")
             else:
                 print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
+                
+            time.sleep(1.1) # <--- ADD THIS LINE at the end of the `if not processed:` block
 
 
 
