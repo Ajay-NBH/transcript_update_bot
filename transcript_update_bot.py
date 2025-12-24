@@ -590,7 +590,11 @@ def main():
                     print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
                 else:
                     print(f"Failed to update meeting_conducted status for {t['event_name']} at row {index}")
-                time.sleep(1.1) # <--- ADD THIS LINE at the end of the if-block
+            
+            # MOVED OUTSIDE the 'if' block and INCREASED to 3 seconds
+            # This ensures we never exceed 60 requests/min even with 3 writes per loop
+            print("Sleeping to avoid rate limits...")
+            time.sleep(3)
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
