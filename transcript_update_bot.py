@@ -9,9 +9,7 @@ import io # For GDrive downloads
 import re 
 import json
 import requests
-import socket 
 
-socket.setdefaulttimeout(600) 
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
