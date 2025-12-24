@@ -596,7 +596,7 @@ def main():
         
         # MOVED OUTSIDE the 'if' block and INCREASED duration
         # This ensures the bot sleeps even if it didn't write anything, preventing API overload
-        time.sleep(3)
+        time.sleep(1.5)
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
@@ -699,7 +699,7 @@ def main():
             continue
 
         # MOVED OUTSIDE the if block so it runs every time (even if skipped)
-        time.sleep(2) # <--- ADD THIS LINE at the end of the `if not processed:` block
+        time.sleep(1.5) # <--- ADD THIS LINE at the end of the `if not processed:` block
 
 
 
