@@ -26,10 +26,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
-      - name: Create credential files from Base64 secrets
+      - name: Create credential files from secrets
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS_B64 }}" | base64 -d -i > brand_vmeet_credentials.json
-          echo "${{ secrets.GOOGLE_TOKEN_B64 }}" | base64 -d -i > brand_vmeet_token.json
+          cat << 'EOF' > brand_vmeet_credentials.json
+          ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          EOF
+          
+          cat << 'EOF' > brand_vmeet_token.json
+          ${{ secrets.GOOGLE_TOKEN_JSON }}
+          EOF
+          
+          # Validate JSON format
+          python -c "import json; json.load(open('brand_vmeet_credentials.json'))" || { echo " Invalid credentials JSON"; exit 1; }
+          python -c "import json; json.load(open('brand_vmeet_token.json'))" || { echo " Invalid token JSON"; exit 1; }
+          
+          echo " Credentials loaded and validated successfully"
 
       - name: Run transcript update bot
         timeout-minutes: 20
