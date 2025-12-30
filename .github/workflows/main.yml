@@ -26,13 +26,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
+      - name: Create credential files from Base64 secrets
+        run: |
+          echo "${{ secrets.GOOGLE_CREDENTIALS_B64 }}" | base64 -d > brand_vmeet_credentials.json
+          echo "${{ secrets.GOOGLE_TOKEN_B64 }}" | base64 -d > brand_vmeet_token.json
+
       - name: Run transcript update bot
+        timeout-minutes: 20
         env:
-          # These map the GitHub Secrets to the variables the Python script expects.
-          # We pass the Raw JSON string directly. No file creation needed.
           FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_B64 }}
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
         run: python transcript_update_bot.py
 
