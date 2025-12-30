@@ -9,7 +9,6 @@ import io # For GDrive downloads
 import re 
 import json
 import requests
-import ssl
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -21,7 +20,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, ValidationError, ConfigDict
+from pydantic import BaseModel, ValidationError
 import enum
 from data_config import column_index
 import pandas as pd
@@ -303,8 +302,6 @@ class CompetitorInsight(BaseModel):
 
 class Analysis(BaseModel):
     """Pydantic model for the JSON structure returned by Gemini."""
-    model_config = ConfigDict(use_enum_values=True)  # Updated syntax
-    
     Brand_Size: Brand_Size
     Meeting_Type: str
     Meeting_Agenda: str
@@ -339,6 +336,9 @@ class Analysis(BaseModel):
     Identified_Missed_Opportunities: list[str]
     Pitched_Asset_Relevance_to_Needs: str
     Pre_vs_Post_Meeting_Score: str
+
+    class Config:
+        use_enum_values = True  # Use enum values in the output
 
 audit_params = ["Brand_Size","Meeting_Type","Rebuttal_Handling", "Rapport_Building", 
                 "Improvement_Areas", "Other_Sales_Parameters", 
@@ -385,48 +385,37 @@ def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, cl
         print(f"Google GenAI error: {e}")
         return None
 
-def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option="USER_ENTERED", max_retries=3):
-    """Batch write with exponential backoff retry logic"""
-    
-    if not values1 or not values2:
-        print("No data to write in one or both ranges.")
-        return None
-    
-    body = {
-        "valueInputOption": value_input_option,
-        "data": [
-            {"range": range1, "values": values1},
-            {"range": range2, "values": values2},
-        ],
-    }
+def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
 
-    for attempt in range(max_retries):
-        try:
-            resp = (
-                sheets_service.spreadsheets()
-                .values()
-                .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
-                .execute()
-            )
-            
-            total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
-            print(f"Done. {total_cells} cells updated across both ranges.")
-            return resp
-            
-        except (HttpError, ssl.SSLEOFError, ConnectionError, Exception) as err:
-            wait_time = (2 ** attempt) + 1  # Exponential backoff: 2, 5, 9 seconds
-            if attempt < max_retries - 1:
-                print(f"Error on attempt {attempt + 1}/{max_retries}: {err}")
-                print(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                print(f"Failed after {max_retries} attempts: {err}")
-                return None
-    
-    return None
+    try:
+        if not values1 or not values2:
+            print("No data to write in one or both ranges.")
+            return None
+        body = {
+            "valueInputOption": value_input_option,
+            "data": [
+                {"range": range1, "values": values1},
+                {"range": range2, "values": values2},
+            ],
+        }
+
+        resp = (
+            sheets_service.spreadsheets()
+            .values()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+            .execute()
+        )
+
+        total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
+        print(f"Done. {total_cells} cells updated across both ranges.")
+        return resp
+
+    except HttpError as err:
+        print(f"Sheets API error: {err}")
+        return None
 
 def main():
-    transcripts = fetch_all_transcripts(limit=50)  # Reduced from default 150
+    transcripts = fetch_all_transcripts()
     print(f"Fetched {len(transcripts)} transcripts from Fireflies API")
     
     transcript_sheet_id = "1tEwCsqu-lThnaf_Z8i_X4-pUNzEYuy62Q-fkzsvGRzI"
@@ -444,9 +433,8 @@ def main():
     owner_update_column_audit = audit_sheet_column_headers.index("Owner sheet to be updated") + 1
     owner_update_column_audit_letter = column_index[f"{owner_update_column_audit}"] # Getting the column letter for Owner sheet to be updated column
 
-    # Read the transcript IDs from the transcript sheet and convert to set for fast lookup
-    transcript_ids_raw = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!C2:C")
-    transcript_ids_set = set(row[0] for row in transcript_ids_raw if row)  # Convert to set for O(1) lookup
+    # Read the transcript IDs from the transcript sheet
+    transcript_ids = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!C2:C")
 
     if not transcripts:
         print("Something went wrong while fetching transcripts")
@@ -464,11 +452,6 @@ def main():
         t_event_id = t["calendar_id"]
         t_sentences = t["sentences"]
         t_title = t["title"]
-        
-        # Fast lookup with set - MOVED EARLIER
-        if t_id in transcript_ids_set:
-            continue
-            
         if t_sentences is None:
             t_complete_text = " "
             meeting_duration = "0.0"
@@ -478,6 +461,9 @@ def main():
             if meeting_duration > 10.0 and len(t_complete_text) > 10:
                 meeting_conducted = "Conducted"
             meeting_duration = f"{meeting_duration: .2f}"
+            
+        if [t_id] in transcript_ids: # If the t_id exists in transcript sheet then do not process it
+            continue
         
         doc_url = get_doc_with_t_id(drive_service, transcript_folder_id, t_id)
         
@@ -501,9 +487,9 @@ def main():
                     body=body
                 ).execute()
                 print(f"Appended row: {t_title} to transcript sheet")
-                time.sleep(0.5) # Reduced from 1.1s
-            except Exception as e:
-                print(f"An error occurred while writing into sheets: {e}")
+                time.sleep(1.1) # <--- ADD THIS LINE to slow down writes
+            except:
+                print("An error occurred while writing into sheets")
 
             
         else: # If doc with the given transcript is not present in the folder then create one and stamp it with transcript id
@@ -535,9 +521,8 @@ def main():
                     body=body
                 ).execute()
                 print(f"Appended row: {t_title} to transcript sheet")
-                time.sleep(0.5) # Add sleep here too
-            except Exception as e:
-                print(f"An error occurred while writing into sheets: {e}")
+            except:
+                print("An error occurred while writing into sheets")
                 
         
         if (i+1)%50 == 0:
@@ -605,9 +590,7 @@ def main():
                     print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
                 else:
                     print(f"Failed to update meeting_conducted status for {t['event_name']} at row {index}")
-        
-        # Sleep to prevent API overload
-        time.sleep(0.5)  # Reduced from 1.5s
+                time.sleep(1.1) # <--- ADD THIS LINE at the end of the if-block
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
@@ -629,100 +612,92 @@ def main():
             t_dict["id"] = t[0].split('/')[5]
             t_dict["sheet_index"] = sheet_index+2
             t_ids.append(t_dict)
-     
-    for idx, t in enumerate(t_ids[-300:], 1):
-        print(f"\n=== Processing document {idx}/{len(t_ids[-300:])} ===")
+    
+    for t in t_ids[-300:]:
+        doc_id = t["id"]
+        sheet_index = t["sheet_index"]
+        file = drive_service.files().get(
+            fileId=doc_id, 
+            fields='appProperties, owners, createdTime, modifiedTime'
+        ).execute()
         
-        try:
-            doc_id = t["id"]
-            sheet_index = t["sheet_index"]
+        processed = file.get('appProperties').get('processed', None)
+        
+        if not processed:
+            pm_brief_id = None
+            if len(pm_brief_urls_from_master) >= sheet_index-1:
+                if pm_brief_urls_from_master[sheet_index-2]:
+                    pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
+                    pm_brief_id = pm_brief_url.split('/')[5] if pm_brief_url else None
             
-            # Fetch file metadata
-            file = drive_service.files().get(
-                fileId=doc_id, 
-                fields='appProperties, owners, createdTime, modifiedTime'
-            ).execute()
-            
-            # Safely get processed flag
-            app_props = file.get('appProperties')
-            processed = app_props.get('processed', None) if app_props else None
-            
-            if not processed:
-                pm_brief_id = None
-                if len(pm_brief_urls_from_master) >= sheet_index-1:
-                    if pm_brief_urls_from_master[sheet_index-2]:
-                        pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
-                        pm_brief_id = pm_brief_url.split('/')[5] if pm_brief_url else None
-                
-                transcript_text = read_doc_text(docs_service, doc_id)
-                if pm_brief_id:
-                    pm_brief_text = read_doc_text(docs_service, pm_brief_id)
-                else:
-                    pm_brief_text = ""
-
-                if not transcript_text:
-                    print(f"Transcript text is empty for doc ID: {doc_id}. Skipping analysis.")
-                    time.sleep(0.5)
-                    continue
-                
-                print(f"Running analysis for doc ID: {doc_id}")
-                analysis = get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client)
-                
-                if analysis is None:
-                    print(f"Failed to get valid analysis for doc ID: {doc_id}. Skipping update.")
-                    time.sleep(0.5)
-                    continue
-                
-                data = []
-                audit_data = []
-                for key, value in analysis.items():
-                    if isinstance(value, str):
-                        if key in audit_params:
-                            audit_data.append(value)
-                        if key in business_params:
-                            data.append(value)
-                    else:
-                        if key in audit_params:
-                            audit_data.append(f"{value}")
-                        if key in business_params:
-                            data.append(f"{value}")
-                
-                rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
-                rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
-                success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
-            
-                if success:
-                    print(f"Updated analysis for doc ID: {doc_id} at row {sheet_index}")
-                    drive_service.files().update(
-                        fileId=doc_id,
-                        body={'appProperties': {'processed': True}}
-                    ).execute()
-                    
-                    # Resetting the owner sheet update flag
-                    print(f"Resetting the owner sheet update flag to TRUE at row {sheet_index}")
-                    data_flag = [["TRUE"]]
-                    rng = f"Meeting_data!{owner_update_column_master_letter}{sheet_index}:{owner_update_column_master_letter}{sheet_index}"
-                    audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{sheet_index}:{owner_update_column_audit_letter}{sheet_index}"
-                    batch_write_two_ranges(sheets_service, master_sheet_id, rng, data_flag, audit_rnge, data_flag)
-                else:
-                    print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
+            transcript_text = read_doc_text(docs_service, doc_id)
+            if pm_brief_id:
+                pm_brief_text = read_doc_text(docs_service, pm_brief_id)
             else:
-                print(f"Doc ID: {doc_id} already processed. Skipping.")
+                pm_brief_text = ""
 
-        except Exception as e:
-            print(f"ERROR processing doc ID {t.get('id', 'unknown')}: {e}")
-            print(traceback.format_exc())
-            print("Sleeping 30s for API cooldown...")
-            time.sleep(30)
-            continue
-
-        # Sleep after each iteration
-        time.sleep(0.5)  # Reduced from 1.5s
+            if not transcript_text:
+                print(f"Transcript text is empty for doc ID: {doc_id}. Skipping analysis.")
+                continue
+            print(f"Running analysis for doc ID: {doc_id}")
+            analysis = get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client)
+            if analysis is None:
+                print(f"Failed to get valid analysis for doc ID: {doc_id}. Skipping update.")
+                continue
+            data = []
+            audit_data = []
+            for key, value in analysis.items():
+                if isinstance(value, str):
+                    if key in audit_params:
+                        audit_data.append(value)
+                    if key in business_params:
+                        data.append(value)
+                else:
+                    if key in audit_params:
+                        audit_data.append(f"{value}")
+                    if key in business_params:
+                        data.append(f"{value}")
+            
+            rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
+            rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
+            success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
+           
+            # Tagging the transcript as processed
+            
+            if success:
+                print(f"Updated analysis for doc ID: {doc_id} at row {sheet_index}")
+                drive_service.files().update(
+                    fileId=doc_id,
+                    body={
+                        'appProperties': {
+                            'processed': True
+                            }
+                        }
+                        ).execute()
+                # Resetting the owner sheet update flag
+                print(f"Resetting the owner sheet update flag to TRUE at row {index}")
+                data = [["TRUE"]]
+                rng = f"Meeting_data!{owner_update_column_master_letter}{sheet_index}:{owner_update_column_master_letter}{sheet_index}"
+                audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{sheet_index}:{owner_update_column_audit_letter}{sheet_index}"
+                success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
+                if success2:
+                    print(f"Owner sheet update flag reset successfully")
+                else:
+                    print(f"Failed to reset owner sheet update flag")
+            else:
+                print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
+                
+            time.sleep(1.1) # <--- ADD THIS LINE at the end of the `if not processed:` block
 
 
 
 if __name__ == "__main__":
     main()           
+        
+
+        
+
+             
         
 
         
