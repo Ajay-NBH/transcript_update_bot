@@ -1,90 +1,294 @@
 import os
+
+import datetime
+import os.path
 import time
-import json
+import base64
 import traceback
+import io # For GDrive downloads
+import re 
+import json
 import requests
 import ssl
-import enum
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
+
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError, ConfigDict
-
-# ==========================================
-# CONFIGURATION & AUTHENTICATION
-# ==========================================
-
-# Load environment variables
-FIREFLY_API_KEY = os.getenv("FIREFLY_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GOOGLE_TOKEN_JSON = os.getenv("GOOGLE_TOKEN_JSON") # Put the content of token.json in GitHub Secrets
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON") # Optional
+import enum
+from data_config import column_index
+import pandas as pd
 
 SCOPES = [
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/drive.readonly',
     'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/documents'
 ]
 
-def get_credentials():
-    creds = None
-    # 1. Try loading from Environment Variable (GitHub Actions Production)
-    if GOOGLE_TOKEN_JSON:
-        try:
-            creds_dict = json.loads(GOOGLE_TOKEN_JSON)
-            creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
-        except Exception as e:
-            print(f"Warning: Could not load token from env: {e}")
+token = os.getenv("GOOGLE_TOKEN", "brand_vmeet_token.json")
+CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS", "brand_vmeet_credentials.json")
+creds = None
+if os.path.exists(token):
+    creds = Credentials.from_authorized_user_file(token, SCOPES)
+if not creds or not creds.valid:
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            CREDENTIALS_FILE, SCOPES
+        )
+        creds = flow.run_local_server(port=0)
+        with open(token, "w") as token:
+            token.write(creds.to_json())
 
-    # 2. Try loading from local file (Local Development)
-    if not creds and os.path.exists("brand_vmeet_token.json"):
-        creds = Credentials.from_authorized_user_file("brand_vmeet_token.json", SCOPES)
-
-    # 3. Refresh or Login
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception:
-                print("Token expired and refresh failed. Re-authentication required.")
-                return None
-        else:
-            # Interactive login (Local only)
-            if os.path.exists("brand_vmeet_credentials.json"):
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    "brand_vmeet_credentials.json", SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-                with open("brand_vmeet_token.json", "w") as token:
-                    token.write(creds.to_json())
-            else:
-                return None
-    return creds
-
-creds = get_credentials()
-if not creds:
-    raise Exception("CRITICAL: Authentication failed. No valid token found.")
-
-# Build Services
+# Build drive service
 drive_service = build("drive", "v3", credentials=creds)
+
+# Build sheet service
 sheets_service = build("sheets", "v4", credentials=creds)
+
+# Build docs service
 docs_service = build('docs', 'v1', credentials=creds)
 
-# ==========================================
-# DATA MODELS (GEMINI)
-# ==========================================
+# Write a function to fetch transcript payload using fireflies API
+API_URL = "https://api.fireflies.ai/graphql"
+FIREFLY_API_KEY = os.getenv("FIREFLY_API_KEY")
+if not FIREFLY_API_KEY:
+    raise ValueError("FIREFLY_API_KEY environment variable is not set.")
+
+# GraphQL query: use limit & skip; transcripts returns a list
+query = """
+query Transcripts($limit: Int, $skip: Int) {
+  transcripts(limit: $limit, skip: $skip) {
+    id
+    calendar_id      # Google Calendar event ID
+    transcript_url   # Dashboard URL
+    title
+    sentences {
+      index
+      speaker_name
+      speaker_id
+      text
+      raw_text
+      start_time
+      end_time
+    }
+    # add any other fields you need here…
+  }
+}
+"""
+
+headers = {
+    "Authorization": f"Bearer {FIREFLY_API_KEY}",
+    "Content-Type": "application/json",
+}
+
+def fetch_all_transcripts(limit=50):
+    all_transcripts = []
+    skip = 0
+
+    while True:
+        payload = {
+            "query": query,
+            "variables": {"limit": limit, "skip": skip}
+        }
+        r = requests.post(API_URL, json=payload, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+
+        # handle GraphQL errors
+        if "errors" in data:
+            raise RuntimeError(f"GraphQL Error: {data['errors']}")
+
+        batch = data["data"]["transcripts"]
+        if not batch:
+            break
+
+        all_transcripts.extend(batch)
+
+        skip += limit
+        print(f"{len(all_transcripts)} processed")
+        # End the loop once more than 100 transcripts are fetched
+        
+        if len(all_transcripts) > 100:
+            break
+
+
+
+    return all_transcripts
+
+def complete_transcript(sentences):
+    complete_text = ""
+    if not sentences:
+        return complete_text
+    else:
+        for sentence in sentences:
+            start_time = sentence["start_time"]
+            end_time = sentence["end_time"]
+            speaker = sentence["speaker_name"]
+            text = sentence["text"]
+            complete_text += f"Time (in seconds): {start_time} to {end_time}\n"
+            complete_text += f"{speaker}: {text}\n\n"
+    return complete_text
+
+# Write a function to create a doc file in a particular folder and return doc id
+def create_google_doc_in_folder(drive_service, folder_id, doc_name, text, transcript_id):
+    doc_id = None
+    try:
+        # Create a Google Doc in the specified folder
+        file_metadata = {
+            'name': doc_name,
+            'mimeType': 'application/vnd.google-apps.document',
+            'parents': [folder_id]
+        }
+        created = drive_service.files().create(
+            body=file_metadata,
+            fields='id, name, parents'
+        ).execute()
+        
+        print(f"Created Google Doc: {created['name']} (ID: {created['id']})")
+        
+        doc_id = created['id']
+        # Write the content to the Google Doc
+        requests = [
+            {
+                'insertText': {
+                    'location': { 'index': 1 },
+                    'text': text
+                }
+            }
+        ]
+    
+        docs_service.documents().batchUpdate(
+            documentId=doc_id,
+            body={'requests': requests}
+        ).execute()
+        
+        print(f"Written content in file: {created['name']} (ID: {created['id']})")
+        
+        # Update the file with the transcript ID as an app property
+        # This is useful for later retrieval or tagging
+        drive_service.files().update(
+            fileId=doc_id,
+            body={
+                'appProperties': {
+                    'transcript_id': transcript_id
+                }
+            }
+        ).execute()
+        
+        print(f"Tagged the file: {created['name']} with transcript id: {transcript_id}")
+    
+    except Exception as e:
+        print(f"An error occured while creating google doc {e}")
+    return doc_id
+
+# Write a function to update the transcript sheet and to update master sheet with doc link
+def write_data_into_sheets(sheets_service, sheet_id, range, data):
+    
+    values = data
+
+    body = {
+        'values': values
+    }
+    try: 
+        result = sheets_service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range=range,
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+        print(f"Updated values: {data} in sheet: {sheet_id}")
+        return True
+    except Exception as e:
+        print(f"An error occured while writing {data} values in sheet: {sheet_id}: {e}")
+        return False
+
+def read_data_from_sheets(sheets_service, sheet_id, range):
+
+    try:
+        result = (
+                sheets_service.spreadsheets()
+                .values()
+                .get(spreadsheetId=sheet_id, range=range)
+                .execute()
+            )
+        sheet_data = result.get("values", [])
+        print(f"{len(sheet_data)} rows retrieved")
+        return sheet_data
+    except HttpError as error:
+        print(f"An error occurred: {error}")    
+
+
+def get_doc_with_t_id(drive_service, folder_id, transcript_id):
+    q = (
+    f"'{folder_id}' in parents and "
+    f"appProperties has {{ key='transcript_id' and value='{transcript_id}' }} and "
+        "mimeType='application/vnd.google-apps.document' and trashed=false"
+    )
+    resp = drive_service.files().list(
+        q=q,
+        fields="files(id, name, webViewLink)"
+    ).execute()
+
+    files = resp.get('files', [])
+    if files:
+        # we found at least one matching Doc
+        doc = files[0]
+        link = doc.get('webViewLink', f"https://docs.google.com/document/d/{doc['id']}")
+        print("Found in folder:", doc['name'])
+        return link
+        
+    else:
+        print(f"No existing doc tagged with transcript_id={transcript_id}")
+        return None
+
+def read_doc_text(docs_service, document_id):
+    """Fetches a Google Doc and returns its full text as one string."""
+    doc = docs_service.documents().get(documentId=document_id).execute()
+    content = doc.get('body', {}).get('content', [])
+
+    full_text = []
+    for structural_element in content:
+        # Paragraphs, headings, lists all sit under 'paragraph'
+        paragraph = structural_element.get('paragraph')
+        if not paragraph:
+            continue
+
+        for elem in paragraph.get('elements', []):
+            text_run = elem.get('textRun')
+            if not text_run:
+                continue
+            # Append the raw text (including newlines)
+            full_text.append(text_run.get('content', ''))
+
+    return ''.join(full_text)
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+try:
+    client = genai.Client(api_key = GEMINI_API_KEY)
+    # Using a specific model version. 1.5 Flash is faster and cheaper for many tasks.
+    # For higher quality, consider 'gemini-1.5-pro-latest'.
+    print(f"Gemini model configured successfully.")
+except Exception as e:
+    print(f"Error configuring Gemini API: {e}")
 
 class Brand_Size(enum.Enum):
     NATIONAL = "National"
     REGIONAL = "Regional"
     CITY_LEVEL = "City Level"
     UNKNOWN = "Unknown"
+
 
 class ActionItem(BaseModel):
     owner: str
@@ -95,8 +299,12 @@ class CompetitorInsight(BaseModel):
     competitor_name: str
     client_perception_or_insight: str
 
+
+
 class Analysis(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
+    """Pydantic model for the JSON structure returned by Gemini."""
+    model_config = ConfigDict(use_enum_values=True)  # Updated syntax
+    
     Brand_Size: Brand_Size
     Meeting_Type: str
     Meeting_Agenda: str
@@ -137,8 +345,8 @@ audit_params = ["Brand_Size","Meeting_Type","Rebuttal_Handling", "Rapport_Buildi
                 "Need_Identification", "Value_Proposition_Articulation", 
                 "Product_Knowledge_Displayed", "Call_Effectiveness_and_Control", 
                 "Next_Steps_Clarity_and_Commitment", "Identified_Missed_Opportunities", 
-                "Pitched_Asset_Relevance_to_Needs", "Pre_vs_Post_Meeting_Score"]
-
+                "Pitched_Asset_Relevance_to_Needs", "Pre_vs_Post_Meeting_Score"
+                ]  # Parameters to be audited
 business_params = ["Brand_Size", "Meeting_Type", "Meeting_Agenda", "Key_Discussion_Points",
                   "Key_Questions", "Marketing_Assets", "Competition_Discussion",
                   "Action_Items", "Budget_or_Scope",
@@ -148,410 +356,378 @@ business_params = ["Brand_Size", "Meeting_Type", "Meeting_Agenda", "Key_Discussi
                   "Sales_Pitch_Rating", "Client_Pain_Points",
                   "Overall_Client_Sentiment", 
                   "Specific_Competitor_Insights",
-                  "Key_Managerial_Summary"]
-
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
-
-def get_col_letter(n):
-    """Converts 1 to A, 2 to B, 27 to AA, etc."""
-    string = ""
-    while n > 0:
-        n, remainder = divmod(n - 1, 26)
-        string = chr(65 + remainder) + string
-    return string
-
-def read_data_from_sheets(service, sheet_id, range_name):
-    """Safe read that returns [] instead of crashing on None."""
-    try:
-        result = service.spreadsheets().values().get(spreadsheetId=sheet_id, range=range_name).execute()
-        return result.get("values", [])
-    except HttpError as error:
-        print(f"Error reading {range_name}: {error}")
-        return []
-    except Exception as e:
-        print(f"Unexpected error reading sheet: {e}")
-        return []
-
-def batch_update_cells(service, spreadsheet_id, updates):
-    """Updates multiple scattered ranges in one API call."""
-    if not updates:
-        return
-    body = {
-        "valueInputOption": "USER_ENTERED",
-        "data": updates
-    }
-    try:
-        service.spreadsheets().values().batchUpdate(
-            spreadsheetId=spreadsheet_id, body=body
-        ).execute()
-        print(f"Batch updated {len(updates)} ranges.")
-    except Exception as e:
-        print(f"Error during batch update: {e}")
-
-def fetch_all_transcripts(limit=50):
-    API_URL = "https://api.fireflies.ai/graphql"
-    query = """
-    query Transcripts($limit: Int, $skip: Int) {
-      transcripts(limit: $limit, skip: $skip) {
-        id
-        calendar_id
-        transcript_url
-        title
-        sentences {
-          index
-          speaker_name
-          start_time
-          end_time
-          text
-        }
-      }
-    }
-    """
-    headers = {"Authorization": f"Bearer {FIREFLY_API_KEY}", "Content-Type": "application/json"}
-    all_transcripts = []
-    skip = 0
-    
-    # Cap at 100 to prevent infinite loops or quota issues
-    while len(all_transcripts) < 100:
-        payload = {"query": query, "variables": {"limit": limit, "skip": skip}}
-        try:
-            r = requests.post(API_URL, json=payload, headers=headers)
-            r.raise_for_status()
-            data = r.json()
-            batch = data.get("data", {}).get("transcripts", [])
-            if not batch:
-                break
-            all_transcripts.extend(batch)
-            skip += limit
-            print(f"Fetched {len(all_transcripts)} transcripts from Fireflies...")
-        except Exception as e:
-            print(f"Error fetching Fireflies: {e}")
-            break
-            
-    return all_transcripts
-
-def complete_transcript(sentences):
-    if not sentences: return ""
-    text = ""
-    for s in sentences:
-        text += f"Time: {s['start_time']} to {s['end_time']}\n{s['speaker_name']}: {s['text']}\n\n"
-    return text
-
-def create_google_doc(drive_service, docs_service, folder_id, title, text, transcript_id):
-    try:
-        # Create Doc
-        file_metadata = {'name': title, 'mimeType': 'application/vnd.google-apps.document', 'parents': [folder_id]}
-        doc = drive_service.files().create(body=file_metadata, fields='id, webViewLink').execute()
-        doc_id = doc.get('id')
-        
-        # Insert Text
-        requests_body = [{'insertText': {'location': {'index': 1}, 'text': text}}]
-        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
-        
-        # Tag File
-        drive_service.files().update(
-            fileId=doc_id,
-            body={'appProperties': {'transcript_id': transcript_id}}
-        ).execute()
-        
-        print(f"Created Doc: {title}")
-        return doc.get('webViewLink'), doc_id
-    except Exception as e:
-        print(f"Error creating doc: {e}")
-        return None, None
-
-def read_doc_text(docs_service, document_id):
-    try:
-        doc = docs_service.documents().get(documentId=document_id).execute()
-        content = doc.get('body', {}).get('content', [])
-        full_text = []
-        for element in content:
-            paragraph = element.get('paragraph')
-            if paragraph:
-                for elem in paragraph.get('elements', []):
-                    text_run = elem.get('textRun')
-                    if text_run:
-                        full_text.append(text_run.get('content', ''))
-        return ''.join(full_text)
-    except Exception:
-        return ""
+                  "Key_Managerial_Summary"
+                ]  # Parameters to be written in master sheet
 
 def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client):
-    # Safety truncation
-    safe_transcript = transcript_text[:90000] 
-    prompt_json = prompt_template.format(transcript_text=safe_transcript, pm_brief_text=pm_brief_text)
+    """Sends transcript text to Google Gemini API and retrieves raw insights text."""
+
+#     department_prompt = department_prompts.get(department, "General Analysis")
+    # meeting_duration = extract_meeting_duration(transcript_text)  # Extract duration
     
-    config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=Analysis)
+    prompt_json = prompt_template.format(
+    transcript_text=transcript_text,
+    pm_brief_text=pm_brief_text)
+
+    config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=Analysis
+        )
+    
     try:
-        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_json, config=config)
-        return response.parsed.model_dump()
-    except Exception as e:
-        print(f"Gemini API Error: {e}")
+        response = client.models.generate_content(model="gemini-2.5-flash",contents=prompt_json, config=config)
+        parsed: Analysis = response.parsed
+        return parsed.model_dump()  # Return the parsed JSON object as a dictionary
+    except ValidationError as e:
+        print(f"Validation error: {e}")
+        return None
+    except genai.exceptions.GoogleGenAIError as e:
+        print(f"Google GenAI error: {e}")
         return None
 
-# ==========================================
-# MAIN LOGIC
-# ==========================================
+def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option="USER_ENTERED", max_retries=3):
+    """Batch write with exponential backoff retry logic"""
+    
+    if not values1 or not values2:
+        print("No data to write in one or both ranges.")
+        return None
+    
+    body = {
+        "valueInputOption": value_input_option,
+        "data": [
+            {"range": range1, "values": values1},
+            {"range": range2, "values": values2},
+        ],
+    }
+
+    for attempt in range(max_retries):
+        try:
+            resp = (
+                sheets_service.spreadsheets()
+                .values()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+                .execute()
+            )
+            
+            total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
+            print(f"Done. {total_cells} cells updated across both ranges.")
+            return resp
+            
+        except (HttpError, ssl.SSLEOFError, ConnectionError, Exception) as err:
+            wait_time = (2 ** attempt) + 1  # Exponential backoff: 2, 5, 9 seconds
+            if attempt < max_retries - 1:
+                print(f"Error on attempt {attempt + 1}/{max_retries}: {err}")
+                print(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                print(f"Failed after {max_retries} attempts: {err}")
+                return None
+    
+    return None
 
 def main():
-    print("--- Starting Transcript Bot ---")
+    transcripts = fetch_all_transcripts(limit=50)  # Reduced from default 150
+    print(f"Fetched {len(transcripts)} transcripts from Fireflies API")
     
-    # IDs
     transcript_sheet_id = "1tEwCsqu-lThnaf_Z8i_X4-pUNzEYuy62Q-fkzsvGRzI"
     transcript_folder_id = "1EqbAFfiaKWJh051mX_fzIvig917Ofvy7"
     master_sheet_id = "1xtB1KUAXJ6IKMQab0Sb0NJfQppCKLkUERZ4PMZlNfOw"
+    master_sheet_column_headers = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!A1:BU1")[0] #reading the column headers from master sheet
+    owner_column_master = master_sheet_column_headers.index("Owner") + 1 # Getting the index of Owner column in master sheet
+    owner_column_letter_master = column_index[f"{owner_column_master}"] # Getting the column letter for Owner column
+    owner_update_column_master = master_sheet_column_headers.index("Owner sheet to be updated") + 1
+    owner_update_column_master_letter = column_index[f"{owner_update_column_master}"] # Getting the column letter for Owner sheet to be updated column
+
+    audit_sheet_column_headers = read_data_from_sheets(sheets_service, master_sheet_id, "Audit_and_Training!A1:BU1")[0] #reading the column headers from audit and training sheet
+    owner_column_audit = audit_sheet_column_headers.index("Owner") + 1 # Getting the index of Owner column in audit sheet
+    owner_column_letter_audit = column_index[f"{owner_column_audit}"] # Getting the column letter for Owner column
+    owner_update_column_audit = audit_sheet_column_headers.index("Owner sheet to be updated") + 1
+    owner_update_column_audit_letter = column_index[f"{owner_update_column_audit}"] # Getting the column letter for Owner sheet to be updated column
+
+    # Read the transcript IDs from the transcript sheet and convert to set for fast lookup
+    transcript_ids_raw = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!C2:C")
+    transcript_ids_set = set(row[0] for row in transcript_ids_raw if row)  # Convert to set for O(1) lookup
+
+    if not transcripts:
+        print("Something went wrong while fetching transcripts")
+        return
+    # Read the prompt template from the prompts sheet
     prompts_sheet_id = "1_dKfSF_WkANgSNvFbMTR43By_sK74XKWUr9fTzire5s"
+    ts_analysis_tab = "Transcript_analysis"
+    rng = f"{ts_analysis_tab}!A2:A2"
+    ts_analysis_prompt = read_data_from_sheets(sheets_service, prompts_sheet_id, rng)
+    prompt_template = ts_analysis_prompt[0][0]
 
-    # ---------------------------------------------------------
-    # PART 1: FETCH TRANSCRIPTS & SYNC TO TRANSCRIPT SHEET
-    # ---------------------------------------------------------
-    
-    # Read existing transcript IDs to avoid duplicates
-    existing_ids_raw = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!C2:C")
-    existing_ids_set = set(row[0] for row in existing_ids_raw if row)
-    
-    # Fetch new from Fireflies
-    transcripts = fetch_all_transcripts(limit=50)
-    
-    # Pre-fetch existing docs in Drive to avoid creating duplicates (Optimization)
-    print("Checking existing Drive files...")
-    existing_docs_map = {} # {transcript_id: webViewLink}
-    page_token = None
-    while True:
-        try:
-            q = f"'{transcript_folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false"
-            response = drive_service.files().list(q=q, fields="nextPageToken, files(id, webViewLink, appProperties)", pageToken=page_token).execute()
-            for f in response.get('files', []):
-                props = f.get('appProperties')
-                if props and 'transcript_id' in props:
-                    existing_docs_map[props['transcript_id']] = f.get('webViewLink')
-            page_token = response.get('nextPageToken')
-            if not page_token: break
-        except Exception as e:
-            print(f"Drive list error: {e}")
-            break
-
-    new_rows = []
-    
-    print("Processing Transcripts...")
-    for t in transcripts:
+    for i, t in enumerate(transcripts):
+        meeting_conducted = "Not Conducted"
         t_id = t["id"]
-        # Skip if already in sheet
-        if t_id in existing_ids_set:
+        t_event_id = t["calendar_id"]
+        t_sentences = t["sentences"]
+        t_title = t["title"]
+        
+        # Fast lookup with set - MOVED EARLIER
+        if t_id in transcript_ids_set:
             continue
             
-        title = t.get("title", "Untitled")
-        sentences = t.get("sentences")
+        if t_sentences is None:
+            t_complete_text = " "
+            meeting_duration = "0.0"
+        else:
+            t_complete_text = complete_transcript(t_sentences)
+            meeting_duration = (t_sentences[-1]["end_time"] - t_sentences[0]["start_time"])/60
+            if meeting_duration > 10.0 and len(t_complete_text) > 10:
+                meeting_conducted = "Conducted"
+            meeting_duration = f"{meeting_duration: .2f}"
         
-        # Calculate details
-        duration_val = 0.0
-        complete_text = ""
-        conducted = "Not Conducted"
+        doc_url = get_doc_with_t_id(drive_service, transcript_folder_id, t_id)
         
-        if sentences:
-            complete_text = complete_transcript(sentences)
-            if sentences[-1]["end_time"] and sentences[0]["start_time"]:
-                duration_val = (sentences[-1]["end_time"] - sentences[0]["start_time"]) / 60
-            if duration_val > 10.0 and len(complete_text) > 10:
-                conducted = "Conducted"
-        
-        duration_str = f"{duration_val:.2f}"
-        ff_url = f"https://app.fireflies.ai/view/{t_id}"
-        
-        # Check Drive cache or create new
-        doc_url = existing_docs_map.get(t_id)
-        if not doc_url:
-            # Create new doc
-            doc_url, _ = create_google_doc(drive_service, docs_service, transcript_folder_id, title, complete_text, t_id)
-            if not doc_url:
-                continue # Skip on failure
-        
-        new_rows.append([t["calendar_id"], title, t_id, doc_url, ff_url, duration_str, conducted])
-
-    # Batch write new rows to Transcript Sheet
-    if new_rows:
-        try:
-            body = {'values': new_rows}
-            sheets_service.spreadsheets().values().append(
-                spreadsheetId=transcript_sheet_id, range="Sheet1!A:G",
-                valueInputOption='USER_ENTERED', insertDataOption='INSERT_ROWS', body=body
-            ).execute()
-            print(f"Appended {len(new_rows)} new transcripts to sheet.")
-        except Exception as e:
-            print(f"Error appending to sheet: {e}")
-
-    # ---------------------------------------------------------
-    # PART 2: SYNC TO MASTER SHEET (BATCH OPTIMIZED)
-    # ---------------------------------------------------------
-    
-    print("Syncing Master Sheet...")
-    # Get column headers to find indices dynamically
-    master_headers = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!A1:ZZ1")[0]
-    audit_headers = read_data_from_sheets(sheets_service, master_sheet_id, "Audit_and_Training!A1:ZZ1")[0]
-    
-    try:
-        # Find critical columns
-        col_owner_update_master = get_col_letter(master_headers.index("Owner sheet to be updated") + 1)
-        col_owner_update_audit = get_col_letter(audit_headers.index("Owner sheet to be updated") + 1)
-        col_meeting_done = get_col_letter(master_headers.index("Meeting Done") + 1)
-    except ValueError:
-        print("Error: Could not find required column headers in Master/Audit sheets.")
-        return
-
-    # Read data for matching
-    ts_data = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!A2:G")
-    master_cal_ids = [r[0] if r else "" for r in read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!A2:A")]
-    master_urls = [r[0] if r else "" for r in read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")]
-    
-    batch_updates = []
-    
-    for row in ts_data:
-        if len(row) < 7: continue
-        cal_id, title, t_id, doc_url, ff_url, duration, conducted = row[:7]
-        
-        # Logic: If URL not in master but Cal ID is in master -> Update
-        if doc_url in master_urls:
-            continue
+        if doc_url is not None: # If there's a doc already present in the folder, just get the link and update in the sheet
             
-        if cal_id in master_cal_ids:
-            row_idx = master_cal_ids.index(cal_id) + 2 # +2 because 0-index and header row
+            ff_url = f"https://app.fireflies.ai/view/{t_id}"
+
+
+            # Write data into transcript record sheet
+            data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration, meeting_conducted]]
+
+            body = {
+                'values': data_ts_sheet
+            }
+            try:
+                result = sheets_service.spreadsheets().values().append(
+                    spreadsheetId=transcript_sheet_id,
+                    range="Sheet1",
+                    valueInputOption='RAW',
+                    insertDataOption='INSERT_ROWS',
+                    body=body
+                ).execute()
+                print(f"Appended row: {t_title} to transcript sheet")
+                time.sleep(0.5) # Reduced from 1.1s
+            except Exception as e:
+                print(f"An error occurred while writing into sheets: {e}")
+
             
-            # 1. Update Transcript URL & Duration in Meeting_data (Cols I, J)
-            batch_updates.append({
-                'range': f"Meeting_data!I{row_idx}:J{row_idx}",
-                'values': [[doc_url, duration]]
-            })
-            # 2. Update Transcript URL & Duration in Audit_and_Training (Cols I, J)
-            batch_updates.append({
-                'range': f"Audit_and_Training!I{row_idx}:J{row_idx}",
-                'values': [[doc_url, duration]]
-            })
-            # 3. Reset Owner Flag
-            batch_updates.append({
-                'range': f"Meeting_data!{col_owner_update_master}{row_idx}",
-                'values': [["TRUE"]]
-            })
-            batch_updates.append({
-                'range': f"Audit_and_Training!{col_owner_update_audit}{row_idx}",
-                'values': [["TRUE"]]
-            })
-            # 4. Update "Meeting Done" status if applicable
-            if conducted:
-                batch_updates.append({
-                    'range': f"Meeting_data!{col_meeting_done}{row_idx}",
-                    'values': [[conducted]]
-                })
-    
-    # Execute all master sheet updates in ONE call
-    batch_update_cells(sheets_service, master_sheet_id, batch_updates)
-
-    # ---------------------------------------------------------
-    # PART 3: GEMINI ANALYSIS
-    # ---------------------------------------------------------
-    
-    print("Starting Gemini Analysis...")
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception:
-        print("Skipping Analysis: Gemini Client init failed.")
-        return
-
-    # Get prompt
-    raw_prompt = read_data_from_sheets(sheets_service, prompts_sheet_id, "Transcript_analysis!A2:A2")
-    if not raw_prompt:
-        print("Skipping Analysis: Prompt not found.")
-        return
-    prompt_template = raw_prompt[0][0]
-
-    # Re-fetch Master URLs to identify what needs analysis
-    master_urls_refresh = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
-    pm_brief_urls = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!H2:H")
-    
-    # We look at the last 300 entries as per original logic
-    # Find rows where Transcript is present
-    
-    processed_count = 0
-    start_check_index = max(0, len(master_urls_refresh) - 300)
-    
-    for i in range(start_check_index, len(master_urls_refresh)):
-        row_data = master_urls_refresh[i]
-        if not row_data: continue
-        
-        url = row_data[0]
-        if "docs.google.com" not in url: continue
-        
-        try:
-            doc_id = url.split("/d/")[1].split("/")[0]
-        except IndexError:
-            continue
+        else: # If doc with the given transcript is not present in the folder then create one and stamp it with transcript id
             
-        sheet_index = i + 2
-        
-        # Check processing status in Drive
-        try:
-            f = drive_service.files().get(fileId=doc_id, fields="appProperties").execute()
-            props = f.get('appProperties', {})
-            if props.get('processed') == 'True':
+            # Create a transcript doc in the folder and get it's ID
+            
+            doc_id = create_google_doc_in_folder(drive_service, transcript_folder_id, t_title, t_complete_text, t_id)
+            
+            if doc_id is None:
+                print("Moving on to next transcript")
                 continue
+
+            # Create doc URL
+            doc_url = f"https://docs.google.com/document/d/{doc_id}"
+            ff_url = f"https://app.fireflies.ai/view/{t_id}"
+
+            # Write data into transcript record sheet
+            data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration, meeting_conducted]]
+
+            body = {
+                'values': data_ts_sheet
+            }
+            try:
+                result = sheets_service.spreadsheets().values().append(
+                    spreadsheetId=transcript_sheet_id,
+                    range="Sheet1",
+                    valueInputOption='RAW',
+                    insertDataOption='INSERT_ROWS',
+                    body=body
+                ).execute()
+                print(f"Appended row: {t_title} to transcript sheet")
+                time.sleep(0.5) # Add sleep here too
+            except Exception as e:
+                print(f"An error occurred while writing into sheets: {e}")
+                
+        
+        if (i+1)%50 == 0:
+            print("Sleep initiated")
+            time.sleep(50)
+
+    print("All transcripts processed successfully")
+    # Updating master sheet with the doc links by comparing with the transcript sheet
+    transcript_sheet_data = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!A2:G")
+    ts_dict = []
+    for t in transcript_sheet_data:
+        dict = {}
+        dict["calendar_id"] = t[0]
+        dict["event_name"] = t[1]
+        dict["transcript_id"] = t[2]
+        dict["transcript_url"] = t[3]
+        dict["firefly_url"] = t[4]
+        if len(t) > 5:
+            dict["meeting_duration"] = t[5]
+            dict["meeting_conducted"] = t[6] if len(t) > 6 else ''
+        else:
+            dict["meeting_duration"] = ''
+            dict["meeting_conducted"] = ''
+        ts_dict.append(dict)
+    
+    transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
+    calendar_ids_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!A2:A")
+    
+    for t in ts_dict:
+        url = t["transcript_url"]
+        cal_id = t["calendar_id"]
+        meeting_done = t.get("meeting_conducted", None)
+        if [url] in transcript_urls_from_master:
+            continue
+        if [cal_id] in calendar_ids_from_master:
+            index = calendar_ids_from_master.index([cal_id]) + 2
+            data = [[url, t["meeting_duration"]]]
+            range = f"Meeting_data!I{index}:J{index}"
+            audit_rnge = f"Audit_and_Training!I{index}:J{index}"
+            # Write the transcript URL and meeting duration into the master sheet
+            success = batch_write_two_ranges(sheets_service, master_sheet_id, range, data, audit_rnge, data)
+            if success:
+                print(f"Updated transcript in master sheet at row {index} for {t['event_name']}")
+                # Resetting the owner sheet update flag
+                print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
+                data = [["TRUE"]]
+                rng = f"Meeting_data!{owner_update_column_master_letter}{index}:{owner_update_column_master_letter}{index}"
+                audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{index}:{owner_update_column_audit_letter}{index}"
+                success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
+                if success2:
+                    print(f"Owner sheet update flag reset successfully for {t['event_name']}")
+                else:
+                    print(f"Failed to reset owner sheet update flag for {t['event_name']}")
+            else:
+                print(f"Failed to update transcript in master sheet for {t['event_name']}")
+            
+            # If the meeting_conducted status is present, update the meeting_conducted column in the master sheet
+            if meeting_done:
+                print(f"Updating meeting_conducted status for {t['event_name']} at row {index}")
+                data = [[meeting_done]]
+                conducted_status_flag_column = column_index[str(master_sheet_column_headers.index("Meeting Done") + 1)]
+                rng = f"Meeting_data!{conducted_status_flag_column}{index}:{conducted_status_flag_column}{index}"
+                success3 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
+                if success3:
+                    print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
+                else:
+                    print(f"Failed to update meeting_conducted status for {t['event_name']} at row {index}")
+        
+        # Sleep to prevent API overload
+        time.sleep(0.5)  # Reduced from 1.5s
+    
+    # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
+    transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
+    transcript_urls_from_ts_sheet = read_data_from_sheets(sheets_service, transcript_sheet_id, "Sheet1!D2:D")
+    pm_brief_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!H2:H")
+    t_ids = []
+
+    for i, t in enumerate(transcript_urls_from_ts_sheet):
+        t_dict = {}
+        
+        if len(t) == 0:
+            continue
+            
+        if t[0] == 'Transcript not uploaded':
+            continue
+            
+        sheet_index = transcript_urls_from_master.index(t) if t in transcript_urls_from_master else None
+        if sheet_index:
+            t_dict["id"] = t[0].split('/')[5]
+            t_dict["sheet_index"] = sheet_index+2
+            t_ids.append(t_dict)
+     
+    for idx, t in enumerate(t_ids[-300:], 1):
+        print(f"\n=== Processing document {idx}/{len(t_ids[-300:])} ===")
+        
+        try:
+            doc_id = t["id"]
+            sheet_index = t["sheet_index"]
+            
+            # Fetch file metadata
+            file = drive_service.files().get(
+                fileId=doc_id, 
+                fields='appProperties, owners, createdTime, modifiedTime'
+            ).execute()
+            
+            # Safely get processed flag
+            app_props = file.get('appProperties')
+            processed = app_props.get('processed', None) if app_props else None
+            
+            if not processed:
+                pm_brief_id = None
+                if len(pm_brief_urls_from_master) >= sheet_index-1:
+                    if pm_brief_urls_from_master[sheet_index-2]:
+                        pm_brief_url = pm_brief_urls_from_master[sheet_index-2][0]
+                        pm_brief_id = pm_brief_url.split('/')[5] if pm_brief_url else None
+                
+                transcript_text = read_doc_text(docs_service, doc_id)
+                if pm_brief_id:
+                    pm_brief_text = read_doc_text(docs_service, pm_brief_id)
+                else:
+                    pm_brief_text = ""
+
+                if not transcript_text:
+                    print(f"Transcript text is empty for doc ID: {doc_id}. Skipping analysis.")
+                    time.sleep(0.5)
+                    continue
+                
+                print(f"Running analysis for doc ID: {doc_id}")
+                analysis = get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client)
+                
+                if analysis is None:
+                    print(f"Failed to get valid analysis for doc ID: {doc_id}. Skipping update.")
+                    time.sleep(0.5)
+                    continue
+                
+                data = []
+                audit_data = []
+                for key, value in analysis.items():
+                    if isinstance(value, str):
+                        if key in audit_params:
+                            audit_data.append(value)
+                        if key in business_params:
+                            data.append(value)
+                    else:
+                        if key in audit_params:
+                            audit_data.append(f"{value}")
+                        if key in business_params:
+                            data.append(f"{value}")
+                
+                rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
+                rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
+                success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
+            
+                if success:
+                    print(f"Updated analysis for doc ID: {doc_id} at row {sheet_index}")
+                    drive_service.files().update(
+                        fileId=doc_id,
+                        body={'appProperties': {'processed': True}}
+                    ).execute()
+                    
+                    # Resetting the owner sheet update flag
+                    print(f"Resetting the owner sheet update flag to TRUE at row {sheet_index}")
+                    data_flag = [["TRUE"]]
+                    rng = f"Meeting_data!{owner_update_column_master_letter}{sheet_index}:{owner_update_column_master_letter}{sheet_index}"
+                    audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{sheet_index}:{owner_update_column_audit_letter}{sheet_index}"
+                    batch_write_two_ranges(sheets_service, master_sheet_id, rng, data_flag, audit_rnge, data_flag)
+                else:
+                    print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
+            else:
+                print(f"Doc ID: {doc_id} already processed. Skipping.")
+
         except Exception as e:
-            print(f"Skipping doc {doc_id} due to error: {e}")
+            print(f"ERROR processing doc ID {t.get('id', 'unknown')}: {e}")
+            print(traceback.format_exc())
+            print("Sleeping 30s for API cooldown...")
+            time.sleep(30)
             continue
 
-        print(f"Analyzing Doc ID: {doc_id} (Row {sheet_index})")
-        
-        # Get PM Brief if available
-        pm_brief_text = ""
-        if i < len(pm_brief_urls) and pm_brief_urls[i]:
-            pm_brief_url = pm_brief_urls[i][0]
-            if "docs.google.com" in pm_brief_url:
-                try:
-                    pm_id = pm_brief_url.split("/d/")[1].split("/")[0]
-                    pm_brief_text = read_doc_text(docs_service, pm_id)
-                except:
-                    pass
+        # Sleep after each iteration
+        time.sleep(0.5)  # Reduced from 1.5s
 
-        transcript_text = read_doc_text(docs_service, doc_id)
-        if not transcript_text: continue
 
-        # Call Gemini
-        analysis = get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, client)
-        if not analysis: continue
-
-        # Prepare Data for Write
-        data_row = []
-        audit_row = []
-        
-        for key, value in analysis.items():
-            val_str = str(value)
-            if key in audit_params: audit_row.append(val_str)
-            if key in business_params: data_row.append(val_str)
-
-        # Batch write the results for this single analysis (Analysis is slow, so writing row-by-row here is acceptable/safer)
-        updates = [
-            {'range': f"Meeting_data!K{sheet_index}:AF{sheet_index}", 'values': [data_row]},
-            {'range': f"Audit_and_Training!K{sheet_index}:X{sheet_index}", 'values': [audit_row]},
-            {'range': f"Meeting_data!{col_owner_update_master}{sheet_index}", 'values': [["TRUE"]]},
-            {'range': f"Audit_and_Training!{col_owner_update_audit}{sheet_index}", 'values': [["TRUE"]]}
-        ]
-        
-        batch_update_cells(sheets_service, master_sheet_id, updates)
-        
-        # Mark as processed
-        drive_service.files().update(
-            fileId=doc_id,
-            body={'appProperties': {'processed': 'True'}}
-        ).execute()
-        
-        processed_count += 1
-        time.sleep(1) # Short pause to be nice to API
-
-    print(f"Analysis complete. Processed {processed_count} documents.")
 
 if __name__ == "__main__":
-    main()    
+    main()           
         
+
+        
+
+               
 
         
 
