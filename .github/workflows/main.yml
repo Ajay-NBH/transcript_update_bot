@@ -28,8 +28,8 @@ jobs:
 
       - name: Create credential files from Base64 secrets
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS_B64 }}" | base64 -d > brand_vmeet_credentials.json
-          echo "${{ secrets.GOOGLE_TOKEN_B64 }}" | base64 -d > brand_vmeet_token.json
+          echo "${{ secrets.GOOGLE_CREDENTIALS_B64 }}" | base64 -d -i > brand_vmeet_credentials.json
+          echo "${{ secrets.GOOGLE_TOKEN_B64 }}" | base64 -d -i > brand_vmeet_token.json
 
       - name: Run transcript update bot
         timeout-minutes: 20
