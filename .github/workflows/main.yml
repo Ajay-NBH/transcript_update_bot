@@ -12,39 +12,27 @@ jobs:
   run-script:
     runs-on: ubuntu-latest
 
-    # Only the raw API key stays un‐encoded
-    env:
-      FIREFLY_API_KEY:   ${{ secrets.FIREFLY_API_KEY }}
-      GOOGLE_CREDS_B64:  ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
-      GOOGLE_TOKEN_B64:  ${{ secrets.GOOGLE_TOKEN_B64 }}
-      GEMINI_API_KEY:   ${{ secrets.GEMINI_API_KEY }}
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies (force fresh install)
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
-
-      - name: Decode Google secrets
-        run: |
-          # Decode and write your client_secrets (for InstalledAppFlow)
-          echo "$GOOGLE_CREDS_B64" | base64 --decode > credentials.json
-          # Decode and write your stored token (so from_authorized_user_file() can read it)
-          echo "$GOOGLE_TOKEN_B64" | base64 --decode > token.json
-
       - name: Run transcript update bot
         env:
-          # Point your Python code at the files we just wrote
-          GOOGLE_CREDENTIALS: credentials.json
-          GOOGLE_TOKEN:      token.json
-          FIREFLY_API_KEY:   ${{ secrets.FIREFLY_API_KEY }}
+          # These map the GitHub Secrets to the variables the Python script expects.
+          # We pass the Raw JSON string directly. No file creation needed.
+          FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_B64 }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
         run: python transcript_update_bot.py
+
