@@ -9,6 +9,7 @@ import io # For GDrive downloads
 import re 
 import json
 import requests
+import time
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -272,6 +273,137 @@ def read_doc_text(docs_service, document_id):
             full_text.append(text_run.get('content', ''))
 
     return ''.join(full_text)
+    # ============= NEW RETRY LOGIC FUNCTIONS =============
+
+import time
+from googleapiclient.errors import HttpError
+
+def write_with_retry(sheets_service, sheet_id, range, data, max_retries=5):
+    """Write data with exponential backoff retry"""
+    for attempt in range(max_retries):
+        try:
+            body = {'values': data}
+            result = sheets_service.spreadsheets().values().update(
+                spreadsheetId=sheet_id,
+                range=range,
+                valueInputOption='USER_ENTERED',
+                body=body
+            ).execute()
+            print(f"Updated values: {data} in sheet: {sheet_id}")
+            return True
+        except HttpError as error:
+            if error.resp.status == 429:  # Rate limit error
+                wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 5s, 9s, 17s...
+                print(f"Rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}...")
+                time.sleep(wait_time)
+            else:
+                print(f"An error occurred: {error}")
+                return False
+    
+    print(f"Failed after {max_retries} retries")
+    return False
+
+
+def batch_write_two_ranges_with_retry(sheets_service, spreadsheet_id, range1, values1, range2, values2, max_retries=5):
+    """Batch write with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            if not values1 or not values2:
+                print("No data to write in one or both ranges.")
+                return None
+                
+            body = {
+                "valueInputOption": "USER_ENTERED",
+                "data": [
+                    {"range": range1, "values": values1},
+                    {"range": range2, "values": values2},
+                ],
+            }
+
+            resp = (
+                sheets_service.spreadsheets()
+                .values()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+                .execute()
+            )
+
+            total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
+            print(f"Done. {total_cells} cells updated across both ranges.")
+            return resp
+
+        except HttpError as err:
+            if err.resp.status == 429:  # Rate limit error
+                wait_time = (2 ** attempt) + 1
+                print(f"Rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}...")
+                time.sleep(wait_time)
+            else:
+                print(f"Sheets API error: {err}")
+                return None
+    
+    print(f"Failed after {max_retries} retries")
+    return None
+
+
+def batch_write_multiple_ranges(sheets_service, spreadsheet_id, updates_list, max_retries=5):
+    """
+    Write multiple ranges in a single API call with retry logic
+    updates_list: [{"range": "Sheet!A1:B1", "values": [[data]]}, ...]
+    """
+    for attempt in range(max_retries):
+        try:
+            if not updates_list:
+                return None
+                
+            body = {
+                "valueInputOption": "USER_ENTERED",
+                "data": updates_list
+            }
+
+            resp = (
+                sheets_service.spreadsheets()
+                .values()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+                .execute()
+            )
+
+            total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
+            print(f"Done. {total_cells} cells updated across {len(updates_list)} ranges.")
+            return resp
+
+        except HttpError as err:
+            if err.resp.status == 429:  # Rate limit error
+                wait_time = (2 ** attempt) + 1
+                print(f"Rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}...")
+                time.sleep(wait_time)
+            else:
+                print(f"Sheets API error: {err}")
+                return None
+    
+    print(f"Failed after {max_retries} retries")
+    return None
+
+
+class RateLimiter:
+    """Rate limiter to prevent hitting API quotas"""
+    def __init__(self, max_calls=45, period=60):
+        self.max_calls = max_calls  # Keep under 60/min limit
+        self.period = period
+        self.calls = []
+    
+    def wait_if_needed(self):
+        now = time.time()
+        # Remove calls older than the period
+        self.calls = [call_time for call_time in self.calls if now - call_time < self.period]
+        
+        if len(self.calls) >= self.max_calls:
+            sleep_time = self.period - (now - self.calls[0]) + 2
+            print(f"Rate limit approaching ({len(self.calls)} calls in last minute). Sleeping for {sleep_time:.1f} seconds...")
+            time.sleep(sleep_time)
+            self.calls = []
+        
+        self.calls.append(time.time())
+
+# ============= END NEW FUNCTIONS =============
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 try:
