@@ -34,21 +34,30 @@ SCOPES = [
     'https://www.googleapis.com/auth/documents'
 ]
 
-token = os.getenv("GOOGLE_TOKEN", "brand_vmeet_token.json")
-CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS", "brand_vmeet_credentials.json")
+token = "brand_vmeet_token.json"  # Use fixed filename
+CREDENTIALS_FILE = "brand_vmeet_credentials.json"  # Use fixed filename
+
 creds = None
 if os.path.exists(token):
+    print(f"Loading credentials from {token}")
     creds = Credentials.from_authorized_user_file(token, SCOPES)
+else:
+    print(f"ERROR: Token file {token} not found!")
+
 if not creds or not creds.valid:
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        print("Refreshing expired credentials...")
+        try:
+            creds.refresh(Request())
+            print("✅ Credentials refreshed successfully")
+        except Exception as e:
+            print(f"❌ Failed to refresh credentials: {e}")
+            print(f"Token scopes: {creds.scopes if creds else 'N/A'}")
+            print(f"Required scopes: {SCOPES}")
+            raise
     else:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            CREDENTIALS_FILE, SCOPES
-        )
-        creds = flow.run_local_server(port=0)
-        with open(token, "w") as token:
-            token.write(creds.to_json())
+        print("ERROR: No valid credentials and cannot run interactive flow in GitHub Actions")
+        raise ValueError("Authentication failed - token may be invalid or missing refresh_token")
 
 # Build drive service
 drive_service = build("drive", "v3", credentials=creds)
