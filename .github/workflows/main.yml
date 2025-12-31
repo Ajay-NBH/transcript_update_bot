@@ -47,5 +47,7 @@ jobs:
         env:
           FIREFLY_API_KEY: ${{ secrets.FIREFLY_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: brand_vmeet_credentials.json  # Add this
+          GOOGLE_TOKEN: brand_vmeet_token.json  # Add this
         run: python transcript_update_bot.py
 
