@@ -195,24 +195,8 @@ def create_google_doc_in_folder(drive_service, folder_id, doc_name, text, transc
 
 # Write a function to update the transcript sheet and to update master sheet with doc link
 def write_data_into_sheets(sheets_service, sheet_id, range, data):
-    
-    values = data
-
-    body = {
-        'values': values
-    }
-    try: 
-        result = sheets_service.spreadsheets().values().update(
-            spreadsheetId=sheet_id,
-            range=range,
-            valueInputOption='USER_ENTERED',
-            body=body
-        ).execute()
-        print(f"Updated values: {data} in sheet: {sheet_id}")
-        return True
-    except Exception as e:
-        print(f"An error occured while writing {data} values in sheet: {sheet_id}: {e}")
-        return False
+    """Write data with retry logic"""
+    return write_with_retry(sheets_service, sheet_id, range, data)
 
 def read_data_from_sheets(sheets_service, sheet_id, range):
 
@@ -518,33 +502,8 @@ def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, cl
         return None
 
 def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
-
-    try:
-        if not values1 or not values2:
-            print("No data to write in one or both ranges.")
-            return None
-        body = {
-            "valueInputOption": value_input_option,
-            "data": [
-                {"range": range1, "values": values1},
-                {"range": range2, "values": values2},
-            ],
-        }
-
-        resp = (
-            sheets_service.spreadsheets()
-            .values()
-            .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
-            .execute()
-        )
-
-        total_cells = sum(r.get("updatedCells", 0) for r in resp["responses"])
-        print(f"Done. {total_cells} cells updated across both ranges.")
-        return resp
-
-    except HttpError as err:
-        print(f"Sheets API error: {err}")
-        return None
+    """Wrapper function that uses retry logic"""
+    return batch_write_two_ranges_with_retry(sheets_service, spreadsheet_id, range1, values1, range2, values2)
 
 def main():
     transcripts = fetch_all_transcripts()
@@ -683,46 +642,74 @@ def main():
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
     calendar_ids_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!A2:A")
     
+     # Initialize rate limiter
+    rate_limiter = RateLimiter(max_calls=45, period=60)
+    
+    # Collect all updates first for batching
+    all_updates = []
+    processed_count = 0
+    
     for t in ts_dict:
         url = t["transcript_url"]
         cal_id = t["calendar_id"]
         meeting_done = t.get("meeting_conducted", None)
+        
         if [url] in transcript_urls_from_master:
             continue
+            
         if [cal_id] in calendar_ids_from_master:
             index = calendar_ids_from_master.index([cal_id]) + 2
-            data = [[url, t["meeting_duration"]]]
-            range = f"Meeting_data!I{index}:J{index}"
-            audit_rnge = f"Audit_and_Training!I{index}:J{index}"
-            # Write the transcript URL and meeting duration into the master sheet
-            success = batch_write_two_ranges(sheets_service, master_sheet_id, range, data, audit_rnge, data)
-            if success:
-                print(f"Updated transcript in master sheet at row {index} for {t['event_name']}")
-                # Resetting the owner sheet update flag
-                print(f"Resetting the owner sheet update flag to TRUE at row {index} for {t['event_name']} ")
-                data = [["TRUE"]]
-                rng = f"Meeting_data!{owner_update_column_master_letter}{index}:{owner_update_column_master_letter}{index}"
-                audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{index}:{owner_update_column_audit_letter}{index}"
-                success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
-                if success2:
-                    print(f"Owner sheet update flag reset successfully for {t['event_name']}")
-                else:
-                    print(f"Failed to reset owner sheet update flag for {t['event_name']}")
-            else:
-                print(f"Failed to update transcript in master sheet for {t['event_name']}")
             
-            # If the meeting_conducted status is present, update the meeting_conducted column in the master sheet
+            # Collect updates instead of writing immediately
+            all_updates.append({
+                "range": f"Meeting_data!I{index}:J{index}",
+                "values": [[url, t["meeting_duration"]]]
+            })
+            all_updates.append({
+                "range": f"Audit_and_Training!I{index}:J{index}",
+                "values": [[url, t["meeting_duration"]]]
+            })
+            all_updates.append({
+                "range": f"Meeting_data!{owner_update_column_master_letter}{index}",
+                "values": [["TRUE"]]
+            })
+            all_updates.append({
+                "range": f"Audit_and_Training!{owner_update_column_audit_letter}{index}",
+                "values": [["TRUE"]]
+            })
+            
             if meeting_done:
-                print(f"Updating meeting_conducted status for {t['event_name']} at row {index}")
-                data = [[meeting_done]]
                 conducted_status_flag_column = column_index[str(master_sheet_column_headers.index("Meeting Done") + 1)]
-                rng = f"Meeting_data!{conducted_status_flag_column}{index}:{conducted_status_flag_column}{index}"
-                success3 = write_data_into_sheets(sheets_service, master_sheet_id, rng, data)
-                if success3:
-                    print(f"Updated meeting_conducted status for {t['event_name']} at row {index}")
+                all_updates.append({
+                    "range": f"Meeting_data!{conducted_status_flag_column}{index}",
+                    "values": [[meeting_done]]
+                })
+            
+            processed_count += 1
+            print(f"Queued updates for {t['event_name']} at row {index}")
+            
+            # Write in batches of 10 to avoid rate limits
+            if len(all_updates) >= 40:  # 40 ranges = ~10 transcripts worth of updates
+                rate_limiter.wait_if_needed()
+                success = batch_write_multiple_ranges(sheets_service, master_sheet_id, all_updates)
+                if success:
+                    print(f"Successfully wrote batch of {len(all_updates)} ranges")
                 else:
-                    print(f"Failed to update meeting_conducted status for {t['event_name']} at row {index}")
-                time.sleep(1.1) # <--- ADD THIS LINE at the end of the if-block
+                    print(f"Failed to write batch")
+                all_updates = []
+                time.sleep(2)  # Additional safety delay
+    
+    # Write any remaining updates
+    if all_updates:
+        rate_limiter.wait_if_needed()
+        success = batch_write_multiple_ranges(sheets_service, master_sheet_id, all_updates)
+        if success:
+            print(f"Successfully wrote final batch of {len(all_updates)} ranges")
+        else:
+            print(f"Failed to write final batch")
+        time.sleep(2)
+    
+    print(f"Completed updating {processed_count} transcripts in master sheet")
     
     # Here I will run an analysis on the transcript using genai and update the master sheet with the analysis
     transcript_urls_from_master = read_data_from_sheets(sheets_service, master_sheet_id, "Meeting_data!I2:I")
@@ -792,10 +779,12 @@ def main():
             
             rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
             rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
+            
+            # Use rate limiter before writing
+            rate_limiter.wait_if_needed()
             success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
            
             # Tagging the transcript as processed
-            
             if success:
                 print(f"Updated analysis for doc ID: {doc_id} at row {sheet_index}")
                 drive_service.files().update(
@@ -803,14 +792,18 @@ def main():
                     body={
                         'appProperties': {
                             'processed': True
-                            }
                         }
-                        ).execute()
+                    }
+                ).execute()
+                
                 # Resetting the owner sheet update flag
-                print(f"Resetting the owner sheet update flag to TRUE at row {index}")
+                print(f"Resetting the owner sheet update flag to TRUE at row {sheet_index}")
                 data = [["TRUE"]]
                 rng = f"Meeting_data!{owner_update_column_master_letter}{sheet_index}:{owner_update_column_master_letter}{sheet_index}"
                 audit_rnge = f"Audit_and_Training!{owner_update_column_audit_letter}{sheet_index}:{owner_update_column_audit_letter}{sheet_index}"
+                
+                # Use rate limiter before writing
+                rate_limiter.wait_if_needed()
                 success2 = batch_write_two_ranges(sheets_service, master_sheet_id, rng, data, audit_rnge, data)
                 if success2:
                     print(f"Owner sheet update flag reset successfully")
@@ -818,10 +811,9 @@ def main():
                     print(f"Failed to reset owner sheet update flag")
             else:
                 print(f"Failed to update analysis for doc ID: {doc_id} at row {sheet_index}")
-                
-            time.sleep(1.1) # <--- ADD THIS LINE at the end of the `if not processed:` block
-
-
+            
+            # Longer delay after analysis (these are expensive operations)
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()           
