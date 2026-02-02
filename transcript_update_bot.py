@@ -551,33 +551,32 @@ def main():
         t_event_id = t["calendar_id"]
         t_sentences = t["sentences"]
         t_title = t["title"]
-    if t_sentences is None:
-        t_complete_text = ""
-        meeting_duration = "0.0"
-    else:
-        t_complete_text = complete_transcript(t_sentences)
-        meeting_duration = (
-            t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]
-        ) / 60
-
-        if meeting_duration > 10.0 and len(t_complete_text) > 10:
-            meeting_conducted = "Conducted"
-
-        meeting_duration = f"{meeting_duration:.2f}"
-
-    if [t_id] in transcript_ids:  # If the t_id exists in transcript sheet then do not process it
-        continue
-
-    doc_url = get_doc_with_t_id(drive_service, transcript_folder_id, t_id)
-
-    if doc_url is not None:  # If there's a doc already present in the folder, just get the link and update in the sheet
         
-        ff_url = f"https://app.fireflies.ai/view/{t_id}"
+        if t_sentences is None:
+            t_complete_text = ""
+            meeting_duration = "0.0"
+        else:
+            t_complete_text = complete_transcript(t_sentences)
+            meeting_duration = (
+                t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]
+            ) / 60
 
-        # Write data into transcript record sheet
+            if meeting_duration > 10.0 and len(t_complete_text) > 10:
+                meeting_conducted = "Conducted"
 
+            meeting_duration = f"{meeting_duration:.2f}"
 
+        if [t_id] in transcript_ids:  # If the t_id exists in transcript sheet then do not process it
+            continue
+
+        doc_url = get_doc_with_t_id(drive_service, transcript_folder_id, t_id)
+
+        if doc_url is not None:  # If there's a doc already present in the folder, just get the link and update in the sheet
             
+            ff_url = f"https://app.fireflies.ai/view/{t_id}"
+
+            # Write data into transcript record sheet
+
             data_ts_sheet = [[t_event_id, t_title, t_id, doc_url, ff_url, meeting_duration, meeting_conducted]]
 
             body = {
@@ -830,7 +829,10 @@ def main():
             time.sleep(3)
 
 if __name__ == "__main__":
-    main()           
+    main()
+
+
+         
         
 
         
