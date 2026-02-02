@@ -551,7 +551,7 @@ def main():
         t_event_id = t["calendar_id"]
         t_sentences = t["sentences"]
         t_title = t["title"]
-if t_sentences is None:
+    if t_sentences is None:
             t_complete_text = " "
             meeting_duration = "0.0"
         else:
