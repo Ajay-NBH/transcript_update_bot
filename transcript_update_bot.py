@@ -552,14 +552,19 @@ def main():
         t_sentences = t["sentences"]
         t_title = t["title"]
     if t_sentences is None:
-            t_complete_text = " "
-            meeting_duration = "0.0"
-        else:
-            t_complete_text = complete_transcript(t_sentences)
-            meeting_duration = (t_sentences[-1]["end_time"] - t_sentences[0]["start_time"])/60
-            if meeting_duration > 10.0 and len(t_complete_text) > 10:
-                meeting_conducted = "Conducted"
-            meeting_duration = f"{meeting_duration: .2f}"
+    t_complete_text = ""
+    meeting_duration = "0.0"
+    else:
+    t_complete_text = complete_transcript(t_sentences)
+    meeting_duration = (
+        t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]
+    ) / 60
+
+    if meeting_duration > 10.0 and len(t_complete_text) > 10:
+        meeting_conducted = "Conducted"
+
+    meeting_duration = f"{meeting_duration:.2f}"
+
             
         if [t_id] in transcript_ids: # If the t_id exists in transcript sheet then do not process it
             continue
