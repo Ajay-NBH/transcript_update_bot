@@ -82,7 +82,6 @@ query Transcripts($limit: Int, $skip: Int) {
     calendar_id      # Google Calendar event ID
     transcript_url   # Dashboard URL
     title
-    duration         # Meeting Duration 
     sentences {
       index
       speaker_name
@@ -92,6 +91,7 @@ query Transcripts($limit: Int, $skip: Int) {
       start_time
       end_time
     }
+    # add any other fields you need here…
   }
 }
 """
@@ -551,34 +551,15 @@ def main():
         t_event_id = t["calendar_id"]
         t_sentences = t["sentences"]
         t_title = t["title"]
-        # --- START OF FIX ---
-        
-        # 1. Generate the full text
-        if t_sentences is None:
+if t_sentences is None:
             t_complete_text = " "
+            meeting_duration = "0.0"
         else:
             t_complete_text = complete_transcript(t_sentences)
-
-        # 2. Calculate Duration (Priority: API Metadata -> Fallback: Sentence Stamps)
-        api_duration = t.get("duration")
-        calculated_duration = 0.0
-
-        if api_duration is not None:
-            # Fireflies sends 'duration' in minutes
-            calculated_duration = float(api_duration)
-        elif t_sentences:
-            # Fallback: Last word time minus First word time (converted to mins)
-            calculated_duration = (t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]) / 60
-        
-        # 3. Determine Conducted Status
-        # We check if the actual audio was > 10 mins AND we have some text content
-        if calculated_duration > 10.0 and len(t_complete_text) > 10:
-            meeting_conducted = "Conducted"
-        
-        # 4. Format for Sheet (Store as string)
-        meeting_duration = f"{calculated_duration:.2f}"
-        
-        # --- END OF FIX ---
+            meeting_duration = (t_sentences[-1]["end_time"] - t_sentences[0]["start_time"])/60
+            if meeting_duration > 10.0 and len(t_complete_text) > 10:
+                meeting_conducted = "Conducted"
+            meeting_duration = f"{meeting_duration: .2f}"
             
         if [t_id] in transcript_ids: # If the t_id exists in transcript sheet then do not process it
             continue
