@@ -412,6 +412,16 @@ class Brand_Size(enum.Enum):
     CITY_LEVEL = "City Level"
     UNKNOWN = "Unknown"
 
+class PitchDirection(enum.Enum):
+    DIGITAL = "Digital Only"
+    PHYSICAL = "Physical Only"
+    HYBRID = "Hybrid"
+    UNKNOWN = "Unknown"
+
+class YesNo(enum.Enum):
+    YES = "Yes"
+    NO = "No"
+    NA = "NA"
 
 class ActionItem(BaseModel):
     owner: str
@@ -460,6 +470,21 @@ class Analysis(BaseModel):
     Identified_Missed_Opportunities: list[str]
     Pitched_Asset_Relevance_to_Needs: str
     Pre_vs_Post_Meeting_Score: str
+    Pitch_Direction: PitchDirection
+    Was_Digital_Inventory_Pitched: YesNo
+    Was_Island_Banner_or_Video_Pitched: YesNo
+    Was_Physical_Inventory_Pitched: YesNo
+    Offline_Assets_Proposed: list[str]
+    Was_Lift_Branding_Pitched: YesNo
+    Were_Success_Stories_Cited: YesNo
+    Which_Brand_Stories_Cited: str
+    Were_ROI_Metrics_Promised: YesNo
+    Details_of_Promised_Metrics: str
+    Was_Pilot_Offered: YesNo
+    Objection_Handling_MyGate: str
+    Client_vs_NBH_Participant_Speaking_Ratio: str
+    Were_Clear_Next_Steps_Established: YesNo
+    Immediate_Next_Action: str
 
     class Config:
         use_enum_values = True  # Use enum values in the output
@@ -776,26 +801,75 @@ def main():
             if analysis is None:
                 print(f"Failed to get valid analysis for doc ID: {doc_id}. Skipping update.")
                 continue
-            data = []
-            audit_data = []
+            # --- 1. DEFINE NEW KEYS (For Columns AN-BB) ---
+            new_column_keys = [
+                "Pitch_Direction", 
+                "Was_Digital_Inventory_Pitched", 
+                "Was_Island_Banner_or_Video_Pitched",
+                "Was_Physical_Inventory_Pitched", 
+                "Offline_Assets_Proposed", 
+                "Was_Lift_Branding_Pitched",
+                "Were_Success_Stories_Cited", 
+                "Which_Brand_Stories_Cited", 
+                "Were_ROI_Metrics_Promised",
+                "Details_of_Promised_Metrics", 
+                "Was_Pilot_Offered", 
+                "Objection_Handling_MyGate",
+                "Client_vs_NBH_Participant_Speaking_Ratio", 
+                "Were_Clear_Next_Steps_Established",
+                "Immediate_Next_Action"
+            ]
+
+            data = []       # Bucket 1: Old Business Data (K-AF)
+            audit_data = [] # Bucket 2: Old Audit Data
+            new_col_data = [] # Bucket 3: New Data (AN-BB)
+
+            # --- 2. PROCESS DATA ---
             for key, value in analysis.items():
-                if isinstance(value, str):
-                    if key in audit_params:
-                        audit_data.append(value)
-                    if key in business_params:
-                        data.append(value)
-                else:
-                    if key in audit_params:
-                        audit_data.append(f"{value}")
-                    if key in business_params:
-                        data.append(f"{value}")
+                formatted_val = f"{value}" if not isinstance(value, str) else value
+                
+                # A. Handle NEW columns separately
+                if key in new_column_keys:
+                    continue # Skip this loop, we handle new keys below
+                
+                # B. Handle OLD columns (Logic remains 100% identical to before)
+                if key in audit_params:
+                    audit_data.append(formatted_val)
+                if key in business_params:
+                    data.append(formatted_val)
+
+            # --- 3. PROCESS NEW COLUMNS STRICTLY IN ORDER ---
+            for key in new_column_keys:
+                val = analysis.get(key, "")
+                # Format lists (e.g., Offline Assets) into a single string
+                if isinstance(val, list):
+                    val = ", ".join(val)
+                # Handle Enums if Pydantic didn't auto-convert
+                if hasattr(val, 'value'): 
+                    val = val.value 
+                new_col_data.append(str(val))
+
+            # --- 4. DEFINE WRITING RANGES ---
+            # Range 1: OLD Business Data (K to AF)
+            rng_existing = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
             
-            rng = f"Meeting_data!K{sheet_index}:AF{sheet_index}"
+            # Range 2: OLD Audit Data
             rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
             
-            # Use rate limiter before writing
+            # Range 3: NEW Data (AN to BB) - Starts after your manual columns
+            rng_new = f"Meeting_data!AN{sheet_index}:BB{sheet_index}"
+
+            # --- 5. EXECUTE BATCH WRITE ---
+            updates = [
+                {"range": rng_existing, "values": [data]},
+                {"range": rng_audit, "values": [audit_data]},
+                {"range": rng_new, "values": [new_col_data]}
+            ]
+            
             rate_limiter.wait_if_needed()
-            success = batch_write_two_ranges(sheets_service, master_sheet_id, rng, [data], rng_audit, [audit_data])
+            
+            # We use 'batch_write_multiple_ranges' (defined in your code) instead of 'batch_write_two_ranges'
+            success = batch_write_multiple_ranges(sheets_service, master_sheet_id, updates)
            
             # Tagging the transcript as processed
             if success:
