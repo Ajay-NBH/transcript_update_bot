@@ -591,7 +591,7 @@ def main():
         if meeting_duration > 10.0 and len(t_complete_text) > 10:
                 meeting_conducted = "Conducted"
 
-            meeting_duration = f"{meeting_duration:.2f}"
+        meeting_duration = f"{meeting_duration:.2f}"
 
         if [t_id] in transcript_ids:  # If the t_id exists in transcript sheet then do not process it
             continue
