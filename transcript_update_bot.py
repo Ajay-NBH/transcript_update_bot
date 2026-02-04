@@ -588,7 +588,7 @@ def main():
             t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]
         ) / 60
 
-            if meeting_duration > 10.0 and len(t_complete_text) > 10:
+        if meeting_duration > 10.0 and len(t_complete_text) > 10:
                 meeting_conducted = "Conducted"
 
             meeting_duration = f"{meeting_duration:.2f}"
