@@ -128,7 +128,7 @@ def fetch_all_transcripts(limit=50):
         print(f"{len(all_transcripts)} processed")
         # End the loop once more than 100 transcripts are fetched
         
-        if len(all_transcripts) > 100:
+        if len(all_transcripts) > 500:
             break
 
 
@@ -577,14 +577,16 @@ def main():
         t_sentences = t["sentences"]
         t_title = t["title"]
         
-        if t_sentences is None:
-            t_complete_text = ""
-            meeting_duration = "0.0"
-        else:
-            t_complete_text = complete_transcript(t_sentences)
-            meeting_duration = (
-                t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]
-            ) / 60
+        if t_sentences is None or not t_sentences:
+            # If Fireflies hasn't finished transcribing, SKIP this meeting.
+            # We will catch it on the next run when sentences are ready.
+            print(f"Skipping {t_title} (ID: {t_id}) - Transcript still processing or empty.")
+            continue 
+
+        t_complete_text = complete_transcript(t_sentences)
+        meeting_duration = (
+            t_sentences[-1]["end_time"] - t_sentences[0]["start_time"]
+        ) / 60
 
             if meeting_duration > 10.0 and len(t_complete_text) > 10:
                 meeting_conducted = "Conducted"
@@ -770,7 +772,7 @@ def main():
             t_dict["sheet_index"] = sheet_index+2
             t_ids.append(t_dict)
     
-    for t in t_ids[-300:]:
+    for t in t_ids[-1000:]:
         doc_id = t["id"]
         sheet_index = t["sheet_index"]
         file = drive_service.files().get(
