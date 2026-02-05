@@ -426,7 +426,7 @@ class YesNo(enum.Enum):
 class RapportLevel(enum.Enum):
     HIGH = "High"
     MEDIUM = "Medium"
-    LOW = "Low
+    LOW = "Low"
 
 class ActionItem(BaseModel):
     owner: str
