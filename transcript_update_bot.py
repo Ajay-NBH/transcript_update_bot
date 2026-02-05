@@ -423,6 +423,11 @@ class YesNo(enum.Enum):
     NO = "No"
     NA = "NA"
 
+class RapportLevel(enum.Enum):
+    HIGH = "High"
+    MEDIUM = "Medium"
+    LOW = "Low
+
 class ActionItem(BaseModel):
     owner: str
     task: str
@@ -485,6 +490,10 @@ class Analysis(BaseModel):
     Client_vs_NBH_Participant_Speaking_Ratio: str
     Were_Clear_Next_Steps_Established: YesNo
     Immediate_Next_Action: str
+    Confidence_Score: int
+    Communication_Clarity_Score: int
+    Energy_Engagement_Score: int
+    Rapport_Building_Capability: RapportLevel
 
     class Config:
         use_enum_values = True  # Use enum values in the output
@@ -820,6 +829,10 @@ def main():
                 "Client_vs_NBH_Participant_Speaking_Ratio", 
                 "Were_Clear_Next_Steps_Established",
                 "Immediate_Next_Action"
+                "Confidence_Score",
+                "Communication_Clarity_Score",
+                "Energy_Engagement_Score",
+                "Rapport_Building_Capability"
             ]
 
             data = []       # Bucket 1: Old Business Data (K-AF)
@@ -859,7 +872,7 @@ def main():
             rng_audit = f"Audit_and_Training!K{sheet_index}:X{sheet_index}"
             
             # Range 3: NEW Data (AN to BB) - Starts after your manual columns
-            rng_new = f"Meeting_data!AN{sheet_index}:BB{sheet_index}"
+            rng_new = f"Meeting_data!AN{sheet_index}:BF{sheet_index}"
 
             # --- 5. EXECUTE BATCH WRITE ---
             updates = [
