@@ -565,7 +565,8 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     TEST_EMAILS = [
         "ajay.saini@nobroker.in",
         "sristi.agarwal@nobroker.in", 
-        "rohit.c@nobroker.in"
+        "rohit.c@nobroker.in",
+        "samdarshi.roy@nobroker.in"
     ]
     # ==============================================
 
