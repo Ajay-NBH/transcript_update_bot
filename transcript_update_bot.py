@@ -68,6 +68,9 @@ sheets_service = build("sheets", "v4", credentials=creds)
 # Build docs service
 docs_service = build('docs', 'v1', credentials=creds)
 
+# Build Calendar Service
+calendar_service = build('calendar', 'v3', credentials=creds)
+
 # Write a function to fetch transcript payload using fireflies API
 API_URL = "https://api.fireflies.ai/graphql"
 FIREFLY_API_KEY = os.getenv("FIREFLY_API_KEY")
@@ -432,6 +435,9 @@ class ActionItem(BaseModel):
     owner: str
     task: str
     priority: str
+    deadline_estimation: str  # e.g., "2 days", "End of Week", "Immediate"
+    suggested_due_date: str   # Format: YYYY-MM-DD
+
 
 class CompetitorInsight(BaseModel):
     competitor_name: str
@@ -546,6 +552,109 @@ def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, cl
 def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
     """Wrapper function that uses retry logic"""
     return batch_write_two_ranges_with_retry(sheets_service, spreadsheet_id, range1, values1, range2, values2)
+# ============= NEW CALENDAR TASK FUNCTION =============
+def create_calendar_action_items(calendar_service, original_event_id, action_items, transcript_title):
+    """
+    Creates 'All-Day' Calendar entries acting as Tasks.
+    FILTERS: Only invites @nobroker.in emails.
+    """
+    # ============ SAFETY CONFIGURATION ============
+    TEST_MODE = True  # <--- CHANGE TO 'False' WHEN READY TO GO LIVE
+    TEST_EMAIL = "ajay.saini@nobroker.in" 
+    # ==============================================
+
+    if not calendar_service or not action_items:
+        return
+
+    print(f"📅 Generating Calendar Action Items for: {transcript_title}")
+
+    # 1. Fetch and Filter Attendees
+    attendees_to_invite = []
+    
+    if TEST_MODE:
+        print(f"   🚧 TEST MODE ON: Sending invites ONLY to {TEST_EMAIL}")
+        attendees_to_invite = [{'email': TEST_EMAIL}]
+    else:
+        try:
+            # Fetch original event to see who was invited
+            original_event = calendar_service.events().get(calendarId='primary', eventId=original_event_id).execute()
+            
+            if 'attendees' in original_event:
+                raw_attendees = original_event['attendees']
+                for att in raw_attendees:
+                    email = att.get('email', '').lower()
+                    
+                    # --- CRITICAL FILTER: NOBROKER HUMANS ONLY ---
+                    if email.endswith('@nobroker.in') and 'resource' not in email and 'fireflies' not in email and 'calendar' not in email:
+                        attendees_to_invite.append({'email': email})
+                    else:
+                        pass # Skipping external/bot attendees
+                        
+        except Exception as e:
+            print(f"⚠️ Could not fetch original attendees. Error: {e}")
+
+    if not attendees_to_invite:
+        print("   ⚠️ No valid NoBroker attendees found to assign tasks to.")
+        return
+
+    # 2. Loop through action items
+    for item in action_items:
+        try:
+            # Parse Due Date
+            due_date_str = item.suggested_due_date
+            try:
+                datetime.datetime.strptime(due_date_str, '%Y-%m-%d')
+            except (ValueError, TypeError):
+                # Default to tomorrow if LLM provides bad date format
+                due_date_str = (datetime.date.today() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+
+            # --- COLOR MAPPING (Matching Your Screenshot) ---
+            # 11 = Tomato (Red/Critical)
+            # 6  = Tangerine (Orange/High) - Your Screenshot Orange
+            # 3  = Grape (Purple/Normal) - Your Screenshot Purple
+            
+            color_id = '3' # Default to Purple
+            prio = str(item.priority).lower()
+            
+            if 'critical' in prio: 
+                color_id = '11'
+            elif 'fast' in prio or 'high' in prio: 
+                color_id = '6'
+            elif 'normal' in prio: 
+                color_id = '3'
+
+            # Create Event Payload
+            # Transparency='transparent' makes it "Free" time (Visual bar only)
+            event_body = {
+                'summary': f"✅ TASK: {item.task} ({item.owner})",
+                'description': (
+                    f"<b>Action Required</b><br>"
+                    f"<b>Task:</b> {item.task}<br>"
+                    f"<b>Owner:</b> {item.owner}<br>"
+                    f"<b>Priority:</b> {item.priority}<br>"
+                    f"<b>Context:</b> {item.deadline_estimation}<br>"
+                    f"<b>Source Meeting:</b> {transcript_title}<br>"
+                ),
+                'start': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'}, # All-Day
+                'end': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},   # All-Day
+                'attendees': attendees_to_invite,
+                'colorId': color_id,
+                'transparency': 'transparent', # Shows as "Free", appears as Top Bar
+                'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 480}]}, # Alert at 9 AM
+                'guestsCanModify': False,
+            }
+
+            calendar_service.events().insert(
+                calendarId='primary', 
+                body=event_body, 
+                sendUpdates='all' # Notifications sent to attendees
+            ).execute()
+            
+            print(f"   ✨ Created Task-Event: {item.task} for {len(attendees_to_invite)} people.")
+            time.sleep(1.5) # Avoid Rate Limits
+
+        except Exception as e:
+            print(f"   ❌ Failed to create task '{item.task}': {e}")
 
 def main():
     transcripts = fetch_all_transcripts()
@@ -863,6 +972,37 @@ def main():
                 if hasattr(val, 'value'): 
                     val = val.value 
                 new_col_data.append(str(val))
+
+            # ============ NEW: CALENDAR TASK INTEGRATION ============
+            # Only run if action items exist
+            if analysis.get("Action_Items"):
+                target_event_id = None
+                target_title = "Meeting Action Item"
+                
+                # We need to find the Event ID associated with this Transcript (t)
+                # t['id'] is the Doc ID (File ID) of the transcript doc.
+                # We look up 'transcript_sheet_data' which has columns: [EventID, Title, TranscriptID, DocURL...]
+                
+                current_processing_id = t.get("id") 
+                
+                # Check rows to find matching Doc ID
+                for row in transcript_sheet_data:
+                    # Row index 3 is Doc URL. Doc URL contains Doc ID.
+                    if len(row) > 3 and current_processing_id in str(row[3]):
+                        target_event_id = row[0] # Event ID is Column A
+                        target_title = row[1]    # Title is Column B
+                        break
+                
+                if target_event_id:
+                    create_calendar_action_items(
+                        calendar_service, 
+                        target_event_id, 
+                        analysis.get("Action_Items"), 
+                        target_title
+                    )
+                else:
+                    print(f"Skipping Calendar Task: Could not find original Event ID for doc {current_processing_id}")
+            # ========================================================
 
             # --- 4. DEFINE WRITING RANGES ---
             # Range 1: OLD Business Data (K to AF)
