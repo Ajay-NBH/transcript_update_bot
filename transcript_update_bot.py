@@ -557,11 +557,12 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     """
     Creates 'All-Day' Calendar entries acting as Tasks.
     FILTERS: Only invites @nobroker.in emails.
+    HANDLES: Dictionary input from Gemini.
     """
     # ============ SAFETY CONFIGURATION ============
     TEST_MODE = True  # <--- SET TO 'False' WHEN READY TO GO LIVE
     
-    # ADD MULTIPLE EMAILS HERE (Comma separated, inside quotes)
+    # ADD MULTIPLE EMAILS HERE
     TEST_EMAILS = [
         "ajay.saini@nobroker.in",
         "sristi.agarwal@nobroker.in", 
@@ -580,12 +581,10 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     
     if TEST_MODE:
         print(f"   🚧 TEST MODE ON: Sending invites to: {TEST_EMAILS}")
-        # Convert list of strings to list of dicts for the API
         attendees_to_invite = [{'email': email} for email in TEST_EMAILS]
     else:
         try:
-            # ... (Rest of the function remains the same)
-            # Fetch original event to see who was invited
+            # Fetch original event
             original_event = calendar_service.events().get(calendarId='primary', eventId=original_event_id).execute()
             
             if 'attendees' in original_event:
@@ -602,50 +601,55 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
         except Exception as e:
             print(f"⚠️ Could not fetch original attendees. Error: {e}")
 
-    # ... (Rest of the function remains exactly the same from here down)
     if not attendees_to_invite:
         print("   ⚠️ No valid NoBroker attendees found to assign tasks to.")
         return
 
     # 2. Loop through action items
     for item in action_items:
+        # DATA HANDLING FIX: Use .get() because item is a Dictionary
+        task_name = item.get('task', 'Unknown Task')
+        owner_name = item.get('owner', 'Unknown')
+        prio_raw = item.get('priority', 'Normal')
+        deadline_est = item.get('deadline_estimation', 'No specific context')
+        due_date_raw = item.get('suggested_due_date', '')
+
         try:
             # Parse Due Date
-            due_date_str = item.suggested_due_date
             try:
-                datetime.datetime.strptime(due_date_str, '%Y-%m-%d')
+                datetime.datetime.strptime(due_date_raw, '%Y-%m-%d')
+                due_date_str = due_date_raw
             except (ValueError, TypeError):
-                # Default to tomorrow if LLM provides bad date format
+                # Default to tomorrow if format is wrong
                 due_date_str = (datetime.date.today() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
             # --- COLOR MAPPING ---
-            # 11 = Tomato (Red/Critical), 6 = Tangerine (Orange/High), 3 = Grape (Purple/Normal)
-            color_id = '3' 
-            prio = str(item.priority).lower()
+            color_id = '3' # Default Purple
+            prio = str(prio_raw).lower()
             
             if 'critical' in prio: 
-                color_id = '11'
+                color_id = '11' # Red
             elif 'fast' in prio or 'high' in prio: 
-                color_id = '6'
+                color_id = '6'  # Orange
             elif 'normal' in prio: 
-                color_id = '3'
+                color_id = '3'  # Purple
 
             # Create Event Payload
             event_body = {
-                'summary': f"✅ TASK: {item.task} ({item.owner})",
+                'summary': f"✅ TASK: {task_name} ({owner_name})",
                 'description': (
                     f"<b>Action Required</b><br>"
-                    f"<b>Task:</b> {item.task}<br>"
-                    f"<b>Owner:</b> {item.owner}<br>"
-                    f"<b>Priority:</b> {item.priority}<br>"
-                    f"<b>Context:</b> {item.deadline_estimation}<br>"
+                    f"<b>Task:</b> {task_name}<br>"
+                    f"<b>Owner:</b> {owner_name}<br>"
+                    f"<b>Priority:</b> {prio_raw}<br>"
+                    f"<b>Context:</b> {deadline_est}<br>"
                     f"<b>Source Meeting:</b> {transcript_title}<br>"
                 ),
-                'start': {'date': due_date_str},
-                'end': {'date': due_date_str},   
+                'start': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},
+                'end': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},   
                 'attendees': attendees_to_invite,
                 'colorId': color_id,
-                'transparency': 'transparent', # Shows as "Free", appears as Top Bar
+                'transparency': 'transparent',
                 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 480}]}, 
                 'guestsCanModify': False,
             }
@@ -653,14 +657,14 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
             calendar_service.events().insert(
                 calendarId='primary', 
                 body=event_body, 
-                sendUpdates='all' # Notifications sent to attendees
+                sendUpdates='all'
             ).execute()
             
-            print(f"   ✨ Created Task-Event: {item.task} for {len(attendees_to_invite)} people.")
+            print(f"   ✨ Created Task-Event: {task_name} for {len(attendees_to_invite)} people.")
             time.sleep(1.5) 
 
         except Exception as e:
-            print(f"   ❌ Failed to create task '{item.task}': {e}")
+            print(f"   ❌ Failed to create task '{task_name}': {e}")
 
 def main():
     transcripts = fetch_all_transcripts()
