@@ -559,8 +559,14 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     FILTERS: Only invites @nobroker.in emails.
     """
     # ============ SAFETY CONFIGURATION ============
-    TEST_MODE = True  # <--- CHANGE TO 'False' WHEN READY TO GO LIVE
-    TEST_EMAIL = "ajay.saini@nobroker.in" 
+    TEST_MODE = True  # <--- SET TO 'False' WHEN READY TO GO LIVE
+    
+    # ADD MULTIPLE EMAILS HERE (Comma separated, inside quotes)
+    TEST_EMAILS = [
+        "ajay.saini@nobroker.in",
+        "sristi.agarwal@nobroker.in", 
+        "rohit.c@nobroker.in"
+    ]
     # ==============================================
 
     if not calendar_service or not action_items:
@@ -572,10 +578,12 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     attendees_to_invite = []
     
     if TEST_MODE:
-        print(f"   🚧 TEST MODE ON: Sending invites ONLY to {TEST_EMAIL}")
-        attendees_to_invite = [{'email': TEST_EMAIL}]
+        print(f"   🚧 TEST MODE ON: Sending invites to: {TEST_EMAILS}")
+        # Convert list of strings to list of dicts for the API
+        attendees_to_invite = [{'email': email} for email in TEST_EMAILS]
     else:
         try:
+            # ... (Rest of the function remains the same)
             # Fetch original event to see who was invited
             original_event = calendar_service.events().get(calendarId='primary', eventId=original_event_id).execute()
             
@@ -588,11 +596,12 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                     if email.endswith('@nobroker.in') and 'resource' not in email and 'fireflies' not in email and 'calendar' not in email:
                         attendees_to_invite.append({'email': email})
                     else:
-                        pass # Skipping external/bot attendees
+                        pass 
                         
         except Exception as e:
             print(f"⚠️ Could not fetch original attendees. Error: {e}")
 
+    # ... (Rest of the function remains exactly the same from here down)
     if not attendees_to_invite:
         print("   ⚠️ No valid NoBroker attendees found to assign tasks to.")
         return
@@ -608,12 +617,9 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                 # Default to tomorrow if LLM provides bad date format
                 due_date_str = (datetime.date.today() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
-            # --- COLOR MAPPING (Matching Your Screenshot) ---
-            # 11 = Tomato (Red/Critical)
-            # 6  = Tangerine (Orange/High) - Your Screenshot Orange
-            # 3  = Grape (Purple/Normal) - Your Screenshot Purple
-            
-            color_id = '3' # Default to Purple
+            # --- COLOR MAPPING ---
+            # 11 = Tomato (Red/Critical), 6 = Tangerine (Orange/High), 3 = Grape (Purple/Normal)
+            color_id = '3' 
             prio = str(item.priority).lower()
             
             if 'critical' in prio: 
@@ -624,7 +630,6 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                 color_id = '3'
 
             # Create Event Payload
-            # Transparency='transparent' makes it "Free" time (Visual bar only)
             event_body = {
                 'summary': f"✅ TASK: {item.task} ({item.owner})",
                 'description': (
@@ -635,12 +640,12 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                     f"<b>Context:</b> {item.deadline_estimation}<br>"
                     f"<b>Source Meeting:</b> {transcript_title}<br>"
                 ),
-                'start': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'}, # All-Day
-                'end': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},   # All-Day
+                'start': {'date': due_date_str},
+                'end': {'date': due_date_str},   
                 'attendees': attendees_to_invite,
                 'colorId': color_id,
                 'transparency': 'transparent', # Shows as "Free", appears as Top Bar
-                'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 480}]}, # Alert at 9 AM
+                'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 480}]}, 
                 'guestsCanModify': False,
             }
 
@@ -651,7 +656,7 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
             ).execute()
             
             print(f"   ✨ Created Task-Event: {item.task} for {len(attendees_to_invite)} people.")
-            time.sleep(1.5) # Avoid Rate Limits
+            time.sleep(1.5) 
 
         except Exception as e:
             print(f"   ❌ Failed to create task '{item.task}': {e}")
