@@ -571,25 +571,7 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     
     # UPDATED LIST OF TEST EMAILS
     TEST_EMAILS = [
-        "ajay.saini@nobroker.in",
-        "sristi.agarwal@nobroker.in", 
-        "rohit.c@nobroker.in",
-        "samdarshi.roy@nobroker.in",
-        "praveena.pandey@nobroker.in",
-        "jaydev.nayyar@nobroker.in",
-        "jhanvi.shah@nobroker.in",
-        "vinayak.mathur@nobroker.in",
-        "pratik.vijay@nobroker.in",
-        "shubham.rakesh@nobroker.in",
-        "shubham.chandrakant@nobroker.in",
-        "aryan.aditya@nobroker.in",
-        "sharwat.aafreen@nobroker.in",
-        "pratiksha.mishra@nobroker.in",
-        "reetu.dinesh@nobroker.in", 
-        "shalini.gupta@nobroker.in", 
-        "radhika.maheshwari@nobroker.in",
-        "mohit.mohan4@nobroker.in",
-        "pratibha.pandey@nobroker.in"
+        "ajay.saini@nobroker.in"
     ]
     # ==============================================
 
