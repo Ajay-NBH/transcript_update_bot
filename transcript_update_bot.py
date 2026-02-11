@@ -21,6 +21,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 from google import genai
 from google.genai import types
+from google.genai import errors 
 from pydantic import BaseModel, ValidationError
 import enum
 from data_config import column_index
@@ -546,8 +547,11 @@ def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, cl
     except ValidationError as e:
         print(f"Validation error: {e}")
         return None
-    except genai.exceptions.GoogleGenAIError as e:
-        print(f"Google GenAI error: {e}")
+    except errors.APIError as e:  # <--- FIXED: Correct Exception Class
+        print(f"Google GenAI API error: {e}")
+        return None
+    except Exception as e:  # <--- SAFETY NET: Catch generic crashes
+        print(f"Unexpected error in Gemini call: {e}")
         return None
 
 def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
@@ -928,7 +932,7 @@ def main():
             t_dict["sheet_index"] = sheet_index+2
             t_ids.append(t_dict)
     
-    for t in t_ids[-1000:]:
+    for t in t_ids[-150:]:
         doc_id = t["id"]
         sheet_index = t["sheet_index"]
         file = drive_service.files().get(
