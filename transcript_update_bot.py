@@ -557,65 +557,78 @@ def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, cl
 def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
     """Wrapper function that uses retry logic"""
     return batch_write_two_ranges_with_retry(sheets_service, spreadsheet_id, range1, values1, range2, values2)
-# ============= NEW SMART CALENDAR FUNCTION =============
+# ============= NEW TARGETED CALENDAR FUNCTION =============
 def create_calendar_action_items(calendar_service, original_event_id, action_items, transcript_title):
     """
     Creates 'All-Day' Calendar entries acting as Tasks.
-    FILTERS: 
-    1. Only invites @nobroker.in emails.
-    2. Only processes tasks marked as 'is_nobroker_task' by LLM.
-    3. SMART DATE: Moves weekend deadlines to Monday automatically.
-    """
-    # ============ SAFETY CONFIGURATION ============
-    TEST_MODE = True  # <--- SET TO 'False' WHEN READY TO GO LIVE
     
-    # UPDATED LIST OF TEST EMAILS
-    TEST_EMAILS = [
-        "ajay.saini@nobroker.in"
+    LOGIC:
+    1. Defines a 'SAFE_TEST_LIST' (Mumbai Team + Leaders).
+    2. Fetches the 'Original Attendees' from the meeting.
+    3. INTERSECTION FILTER: Creates invites ONLY for people who are in BOTH lists.
+       (i.e., Only Mumbai Team members who actually attended the meeting).
+    """
+    
+    # 1. DEFINE THE SAFE LIST (Mumbai National Team + Leaders)
+    SAFE_TEST_LIST = [
+        "ajay.saini@nobroker.in", "sristi.agarwal@nobroker.in", "rohit.c@nobroker.in", "samdarshi.roy@nobroker.in",
+        "praveena.pandey@nobroker.in", "jaydev.nayyar@nobroker.in", "jhanvi.shah@nobroker.in",
+        "vinayak.mathur@nobroker.in", "pratik.vijay@nobroker.in", "shubham.rakesh@nobroker.in",
+        "shubham.chandrakant@nobroker.in", "aryan.aditya@nobroker.in", "sharwat.aafreen@nobroker.in",
+        "pratiksha.mishra@nobroker.in", "reetu.dinesh@nobroker.in", "shalini.gupta@nobroker.in",
+        "radhika.maheshwari@nobroker.in", "mohit.mohan4@nobroker.in", "pratibha.pandey@nobroker.in"
     ]
-    # ==============================================
+    
+    # Normalize list for comparison
+    SAFE_TEST_LIST = [email.lower().strip() for email in SAFE_TEST_LIST]
 
     if not calendar_service or not action_items:
         return
 
-    print(f"📅 Generating Smart Calendar Tasks for: {transcript_title}")
+    print(f"📅 Generating Targeted Tasks for: {transcript_title}")
 
-    # 1. Fetch and Filter Attendees (Standard Logic)
-    attendees_to_invite = []
-    
-    if TEST_MODE:
-        print(f"   🚧 TEST MODE ON: Sending invites to: {TEST_EMAILS}")
-        attendees_to_invite = [{'email': email} for email in TEST_EMAILS]
-    else:
-        try:
-            original_event = calendar_service.events().get(calendarId='primary', eventId=original_event_id).execute()
-            if 'attendees' in original_event:
-                for att in original_event['attendees']:
-                    email = att.get('email', '').lower()
-                    # Filter: NoBroker Humans Only
-                    if email.endswith('@nobroker.in') and 'resource' not in email and 'fireflies' not in email and 'calendar' not in email:
-                        attendees_to_invite.append({'email': email})
-        except Exception as e:
-            print(f"⚠️ Could not fetch original attendees. Error: {e}")
-
-    if not attendees_to_invite:
-        print("   ⚠️ No valid NoBroker attendees found.")
+    # 2. FETCH ORIGINAL ATTENDEES
+    original_attendees = []
+    try:
+        original_event = calendar_service.events().get(calendarId='primary', eventId=original_event_id).execute()
+        if 'attendees' in original_event:
+            for att in original_event['attendees']:
+                email = att.get('email', '').lower().strip()
+                if email.endswith('@nobroker.in') and 'resource' not in email:
+                    original_attendees.append(email)
+    except Exception as e:
+        print(f"⚠️ Could not fetch original attendees. Error: {e}")
         return
 
-    # 2. Loop through action items
+    # 3. CALCULATE THE TARGET LIST (The Intersection)
+    # Only invite people who are in the SAFE LIST *AND* were in the ORIGINAL MEETING
+    final_invite_list = []
+    for email in original_attendees:
+        if email in SAFE_TEST_LIST:
+            final_invite_list.append({'email': email})
+        else:
+            # This person was in the meeting, but is NOT in your test group.
+            # We skip them to be safe.
+            pass
+
+    if not final_invite_list:
+        print(f"   ℹ️ Skipped: No one from the Mumbai/Test team was present in this meeting.")
+        return
+
+    print(f"   🎯 Sending Invites ONLY to: {[e['email'] for e in final_invite_list]}")
+
+    # 4. LOOP AND CREATE TASKS
     for item in action_items:
-        # --- SMART FILTER 1: OWNER CHECK ---
-        # We rely on the LLM's boolean flag, but also do a safety text check
-        is_nbh = item.get('is_nobroker_task', True) # Default to True if missing
+        # --- SMART FILTER: OWNER CHECK ---
+        is_nbh = item.get('is_nobroker_task', True) 
         owner_name = item.get('owner', 'Unknown').lower()
         
-        # Double check: If owner explicitly says "client" or "brand", skip it even if LLM said True
         if "client" in owner_name or "brand" in owner_name or "customer" in owner_name:
             is_nbh = False
 
         if not is_nbh:
-            print(f"   🚫 Skipping Client-Side Task: {item.get('task')}")
-            continue # Skip to next item
+            print(f"   🚫 Skipping Client-Side Task...")
+            continue 
 
         # Data Extraction
         task_name = item.get('task', 'Unknown Task')
@@ -624,29 +637,22 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
         due_date_raw = item.get('suggested_due_date', '')
 
         try:
-            # --- SMART FILTER 2: DATE & WEEKEND LOGIC ---
+            # Date Parsing
             today = datetime.date.today()
-            target_date = today + datetime.timedelta(days=1) # Default tomorrow
+            target_date_str = (today + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
             if due_date_raw:
                 try:
-                    target_date = datetime.datetime.strptime(due_date_raw, '%Y-%m-%d').date()
+                    datetime.datetime.strptime(due_date_raw, '%Y-%m-%d')
+                    target_date_str = due_date_raw
                 except ValueError:
-                    pass # Keep default
+                    pass 
 
-            # WEEKEND CHECK: If Sat (5) or Sun (6), move to Monday
-            if target_date.weekday() >= 5: 
-                days_to_add = 7 - target_date.weekday() # 2 for Sat, 1 for Sun
-                target_date += datetime.timedelta(days=days_to_add)
-                deadline_est += " (Auto-moved from Weekend)"
-
-            due_date_str = target_date.strftime('%Y-%m-%d')
-
-            # --- COLOR MAPPING ---
-            color_id = '3' # Default Purple
+            # Color Logic
+            color_id = '3' 
             prio = str(prio_raw).lower()
-            if 'critical' in prio: color_id = '11' # Red
-            elif 'fast' in prio or 'high' in prio: color_id = '6' # Orange
+            if 'critical' in prio: color_id = '11'
+            elif 'fast' in prio or 'high' in prio: color_id = '6'
 
             # Create Event Payload
             event_body = {
@@ -659,11 +665,11 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                     f"<b>Context:</b> {deadline_est}<br>"
                     f"<b>Source Meeting:</b> {transcript_title}<br>"
                 ),
-                'start': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},
-                'end': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},   
-                'attendees': attendees_to_invite,
+                'start': {'date': target_date_str, 'timeZone': 'Asia/Kolkata'},
+                'end': {'date': target_date_str, 'timeZone': 'Asia/Kolkata'},   
+                'attendees': final_invite_list, # <--- The filtered list
                 'colorId': color_id,
-                'transparency': 'transparent', # Keeps calendar 'Free'
+                'transparency': 'transparent', 
                 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 480}]}, 
                 'guestsCanModify': False,
             }
@@ -674,7 +680,7 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                 sendUpdates='all'
             ).execute()
             
-            print(f"   ✨ Created Smart Task: {task_name} [Due: {due_date_str}]")
+            print(f"   ✨ Created Task: {task_name} for {len(final_invite_list)} attendees.")
             time.sleep(1.5) 
 
         except Exception as e:
