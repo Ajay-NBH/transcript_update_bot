@@ -437,6 +437,7 @@ class ActionItem(BaseModel):
     priority: str
     deadline_estimation: str  # e.g., "2 days", "End of Week", "Immediate"
     suggested_due_date: str   # Format: YYYY-MM-DD
+    is_nobroker_task: bool 
 
 
 class CompetitorInsight(BaseModel):
@@ -552,31 +553,48 @@ def get_gemini_response_json(prompt_template, transcript_text, pm_brief_text, cl
 def batch_write_two_ranges(sheets_service, spreadsheet_id, range1, values1, range2, values2, value_input_option = "USER_ENTERED"):
     """Wrapper function that uses retry logic"""
     return batch_write_two_ranges_with_retry(sheets_service, spreadsheet_id, range1, values1, range2, values2)
-# ============= NEW CALENDAR TASK FUNCTION =============
+# ============= NEW SMART CALENDAR FUNCTION =============
 def create_calendar_action_items(calendar_service, original_event_id, action_items, transcript_title):
     """
     Creates 'All-Day' Calendar entries acting as Tasks.
-    FILTERS: Only invites @nobroker.in emails.
-    HANDLES: Dictionary input from Gemini.
+    FILTERS: 
+    1. Only invites @nobroker.in emails.
+    2. Only processes tasks marked as 'is_nobroker_task' by LLM.
+    3. SMART DATE: Moves weekend deadlines to Monday automatically.
     """
     # ============ SAFETY CONFIGURATION ============
     TEST_MODE = True  # <--- SET TO 'False' WHEN READY TO GO LIVE
     
-    # ADD MULTIPLE EMAILS HERE
+    # UPDATED LIST OF TEST EMAILS
     TEST_EMAILS = [
         "ajay.saini@nobroker.in",
         "sristi.agarwal@nobroker.in", 
         "rohit.c@nobroker.in",
-        "samdarshi.roy@nobroker.in"
+        "samdarshi.roy@nobroker.in",
+        "praveena.pandey@nobroker.in",
+        "jaydev.nayyar@nobroker.in",
+        "jhanvi.shah@nobroker.in",
+        "vinayak.mathur@nobroker.in",
+        "pratik.vijay@nobroker.in",
+        "shubham.rakesh@nobroker.in",
+        "shubham.chandrakant@nobroker.in",
+        "aryan.aditya@nobroker.in",
+        "sharwat.aafreen@nobroker.in",
+        "pratiksha.mishra@nobroker.in",
+        "reetu.dinesh@nobroker.in", 
+        "shalini.gupta@nobroker.in", 
+        "radhika.maheshwari@nobroker.in",
+        "mohit.mohan4@nobroker.in",
+        "pratibha.pandey@nobroker.in"
     ]
     # ==============================================
 
     if not calendar_service or not action_items:
         return
 
-    print(f"📅 Generating Calendar Action Items for: {transcript_title}")
+    print(f"📅 Generating Smart Calendar Tasks for: {transcript_title}")
 
-    # 1. Fetch and Filter Attendees
+    # 1. Fetch and Filter Attendees (Standard Logic)
     attendees_to_invite = []
     
     if TEST_MODE:
@@ -584,63 +602,73 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
         attendees_to_invite = [{'email': email} for email in TEST_EMAILS]
     else:
         try:
-            # Fetch original event
             original_event = calendar_service.events().get(calendarId='primary', eventId=original_event_id).execute()
-            
             if 'attendees' in original_event:
-                raw_attendees = original_event['attendees']
-                for att in raw_attendees:
+                for att in original_event['attendees']:
                     email = att.get('email', '').lower()
-                    
-                    # --- CRITICAL FILTER: NOBROKER HUMANS ONLY ---
+                    # Filter: NoBroker Humans Only
                     if email.endswith('@nobroker.in') and 'resource' not in email and 'fireflies' not in email and 'calendar' not in email:
                         attendees_to_invite.append({'email': email})
-                    else:
-                        pass 
-                        
         except Exception as e:
             print(f"⚠️ Could not fetch original attendees. Error: {e}")
 
     if not attendees_to_invite:
-        print("   ⚠️ No valid NoBroker attendees found to assign tasks to.")
+        print("   ⚠️ No valid NoBroker attendees found.")
         return
 
     # 2. Loop through action items
     for item in action_items:
-        # DATA HANDLING FIX: Use .get() because item is a Dictionary
+        # --- SMART FILTER 1: OWNER CHECK ---
+        # We rely on the LLM's boolean flag, but also do a safety text check
+        is_nbh = item.get('is_nobroker_task', True) # Default to True if missing
+        owner_name = item.get('owner', 'Unknown').lower()
+        
+        # Double check: If owner explicitly says "client" or "brand", skip it even if LLM said True
+        if "client" in owner_name or "brand" in owner_name or "customer" in owner_name:
+            is_nbh = False
+
+        if not is_nbh:
+            print(f"   🚫 Skipping Client-Side Task: {item.get('task')}")
+            continue # Skip to next item
+
+        # Data Extraction
         task_name = item.get('task', 'Unknown Task')
-        owner_name = item.get('owner', 'Unknown')
         prio_raw = item.get('priority', 'Normal')
         deadline_est = item.get('deadline_estimation', 'No specific context')
         due_date_raw = item.get('suggested_due_date', '')
 
         try:
-            # Parse Due Date
-            try:
-                datetime.datetime.strptime(due_date_raw, '%Y-%m-%d')
-                due_date_str = due_date_raw
-            except (ValueError, TypeError):
-                # Default to tomorrow if format is wrong
-                due_date_str = (datetime.date.today() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+            # --- SMART FILTER 2: DATE & WEEKEND LOGIC ---
+            today = datetime.date.today()
+            target_date = today + datetime.timedelta(days=1) # Default tomorrow
+
+            if due_date_raw:
+                try:
+                    target_date = datetime.datetime.strptime(due_date_raw, '%Y-%m-%d').date()
+                except ValueError:
+                    pass # Keep default
+
+            # WEEKEND CHECK: If Sat (5) or Sun (6), move to Monday
+            if target_date.weekday() >= 5: 
+                days_to_add = 7 - target_date.weekday() # 2 for Sat, 1 for Sun
+                target_date += datetime.timedelta(days=days_to_add)
+                deadline_est += " (Auto-moved from Weekend)"
+
+            due_date_str = target_date.strftime('%Y-%m-%d')
 
             # --- COLOR MAPPING ---
             color_id = '3' # Default Purple
             prio = str(prio_raw).lower()
-            
-            if 'critical' in prio: 
-                color_id = '11' # Red
-            elif 'fast' in prio or 'high' in prio: 
-                color_id = '6'  # Orange
-            elif 'normal' in prio: 
-                color_id = '3'  # Purple
+            if 'critical' in prio: color_id = '11' # Red
+            elif 'fast' in prio or 'high' in prio: color_id = '6' # Orange
 
             # Create Event Payload
             event_body = {
-                'summary': f"✅ TASK: {task_name} ({owner_name})",
+                'summary': f"✅ TASK: {task_name} ({item.get('owner')})",
                 'description': (
-                    f"<b>Action Required</b><br>"
+                    f"<b>Action Required (Internal NBH)</b><br>"
                     f"<b>Task:</b> {task_name}<br>"
-                    f"<b>Owner:</b> {owner_name}<br>"
+                    f"<b>Owner:</b> {item.get('owner')}<br>"
                     f"<b>Priority:</b> {prio_raw}<br>"
                     f"<b>Context:</b> {deadline_est}<br>"
                     f"<b>Source Meeting:</b> {transcript_title}<br>"
@@ -649,7 +677,7 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                 'end': {'date': due_date_str, 'timeZone': 'Asia/Kolkata'},   
                 'attendees': attendees_to_invite,
                 'colorId': color_id,
-                'transparency': 'transparent',
+                'transparency': 'transparent', # Keeps calendar 'Free'
                 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 480}]}, 
                 'guestsCanModify': False,
             }
@@ -660,7 +688,7 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
                 sendUpdates='all'
             ).execute()
             
-            print(f"   ✨ Created Task-Event: {task_name} for {len(attendees_to_invite)} people.")
+            print(f"   ✨ Created Smart Task: {task_name} [Due: {due_date_str}]")
             time.sleep(1.5) 
 
         except Exception as e:
