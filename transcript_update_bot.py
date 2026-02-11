@@ -105,38 +105,61 @@ headers = {
     "Content-Type": "application/json",
 }
 
-def fetch_all_transcripts(limit=50):
+def fetch_all_transcripts(limit=50, max_transcripts=100):  
+    """
+    Fetch recent transcripts from Fireflies API.
+    
+    Args:
+        limit: Number of transcripts per API call (default 50)
+        max_transcripts: Maximum total transcripts to fetch (default 100)
+    
+    Returns:
+        List of transcript objects, sorted by newest first
+    """
     all_transcripts = []
     skip = 0
+
+    print(f"📥 Fetching up to {max_transcripts} recent transcripts...")
 
     while True:
         payload = {
             "query": query,
             "variables": {"limit": limit, "skip": skip}
         }
-        r = requests.post(API_URL, json=payload, headers=headers)
-        r.raise_for_status()
+        
+        try:
+            r = requests.post(API_URL, json=payload, headers=headers, timeout=30)
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Fireflies API request failed: {e}")
+            break
+        
         data = r.json()
 
-        # handle GraphQL errors
+        # Handle GraphQL errors
         if "errors" in data:
-            raise RuntimeError(f"GraphQL Error: {data['errors']}")
+            print(f"⚠️ GraphQL Error: {data['errors']}")
+            break
 
         batch = data["data"]["transcripts"]
         if not batch:
+            print("✅ No more transcripts available")
             break
 
         all_transcripts.extend(batch)
-
         skip += limit
-        print(f"{len(all_transcripts)} processed")
-        # End the loop once more than 100 transcripts are fetched
         
-        if len(all_transcripts) > 500:
+        print(f"  📊 Fetched {len(all_transcripts)} transcripts so far...")
+        
+        # ✅ STOP at the new, lower limit
+        if len(all_transcripts) >= max_transcripts:
+            print(f"✅ Reached limit of {max_transcripts} transcripts")
             break
+        
+        # Small delay to avoid rate limiting
+        time.sleep(0.5)
 
-
-
+    print(f"✅ Total transcripts fetched: {len(all_transcripts)}")
     return all_transcripts
 
 def complete_transcript(sentences):
