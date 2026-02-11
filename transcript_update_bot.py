@@ -914,7 +914,7 @@ def main():
             t_dict["sheet_index"] = sheet_index+2
             t_ids.append(t_dict)
     
-    for t in t_ids[-150:]:
+    for t in t_ids[-40:]:
         doc_id = t["id"]
         sheet_index = t["sheet_index"]
         file = drive_service.files().get(
