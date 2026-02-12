@@ -990,7 +990,7 @@ def main():
                 "Objection_Handling_MyGate",
                 "Client_vs_NBH_Participant_Speaking_Ratio", 
                 "Were_Clear_Next_Steps_Established",
-                "Immediate_Next_Action"
+                "Immediate_Next_Action",
                 "Confidence_Score",
                 "Communication_Clarity_Score",
                 "Energy_Engagement_Score",
