@@ -594,7 +594,6 @@ def create_calendar_action_items(calendar_service, original_event_id, action_ite
     
     # 1. DEFINE THE SAFE LIST (Mumbai National Team + Leaders)
     SAFE_TEST_LIST = [
-        "ajay.saini@nobroker.in", "sristi.agarwal@nobroker.in", "rohit.c@nobroker.in", "samdarshi.roy@nobroker.in",
         "praveena.pandey@nobroker.in", "jaydev.nayyar@nobroker.in", "jhanvi.shah@nobroker.in",
         "vinayak.mathur@nobroker.in", "pratik.vijay@nobroker.in", "shubham.rakesh@nobroker.in",
         "shubham.chandrakant@nobroker.in", "aryan.aditya@nobroker.in", "sharwat.aafreen@nobroker.in",
